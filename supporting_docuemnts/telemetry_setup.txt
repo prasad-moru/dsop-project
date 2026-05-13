@@ -1,0 +1,19 @@
+#step_1: 
+   
+   helm repo add jaegertracing https://jaegertracing.github.io/helm-charts
+
+   helm repo update
+  #step_2:    
+   helm install jaeger jaegertracing/jaeger \
+     -f jaeger-values.yaml \
+     -n istio-system
+
+  #step_3: 
+helm repo add kiali https://kiali.org/helm-charts
+
+
+  #step_4: 
+
+helm install kiali-server kiali/kiali-server \
+  -f kiali-values.yaml \
+  -n istio-system

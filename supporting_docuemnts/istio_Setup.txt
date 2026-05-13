@@ -1,0 +1,45 @@
+========================================================================
+
+for this project we need istiod services. 
+
+Istiod is handling ineternal Traffic. 
+Istio-gateway is handling external traffic we have already created alb ingress-controller for 
+external traffice. but here we need Istio-Gateway for Argorollouts canary deployments. 
+
+kubectl delete crd $(kubectl get crd | grep istio.io | awk '{print $1}')
+
+helm repo add istio https://istio-release.storage.googleapis.com/charts
+helm repo update
+kubectl create namespace istio-system
+
+
+helm install istio-base istio/base -n istio-system --set defaultRevision=default
+
+
+helm install istiod istio/istiod -n istio-system --wait
+
+
+====================================================================
+
+istioctl version
+
+kubectl label namespace application istio-injection=enabled
+
+kubectl get namespace application --show-labels
+
+
+
+and also we required istioctl tool 
+
+curl -sL https://istio.io/downloadIstioctl | sh -
+
+export PATH=$HOME/.istioctl/bin:$PATH
+
+
+===========================================================================================
+
+istio helm chart confiurations are not working properly so i have moved to another solution.   article is 
+
+https://medium.com/@radharamadoss/istio-part-1-installation-in-eks-3a075809f204
+
+

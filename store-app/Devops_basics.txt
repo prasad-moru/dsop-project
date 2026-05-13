@@ -1,0 +1,68 @@
+
+
+Devops 
+
+
+what?
+why?
+how?
+
+
+Problems
+
+tools 
+
+solution for the problem with tool. 
+
+Linux 
+
+Git/GitHub
+
+makeline-service	This service handles processing orders from the queue and completing them (Golang)
+order-service	This service is used for placing orders (Javascript)
+product-service	This service is used to perform CRUD operations on products (Rust)
+store-front	Web app for customers to place orders (Vue.js)
+store-admin	Web app used by store employees to view orders in queue and manage products (Vue.js)
+virtual-customer	Simulates order creation on a scheduled basis (Rust)
+virtual-worker	Simulates order completion on a scheduled basis (Rust)
+ai-service	Optional service for adding generative text and graphics creation (Python)
+mongodb	MongoDB instance for persisted data
+rabbitmq	RabbitMQ for an order queue
+
+Build Tools  ===== npm/python/cargo/go 
+
+SAST : SonarQube
+
+Dependency Check Scanning :OWASP
+
+Container Image Scanning: Trivy 
+
+Packaging or deployment : Helm Charts
+
+GithubActions
+
+GitOps
+
+Containerization /Docker
+
+Container Orchestration Tools  Kubernetes
+
+Infrastructure Provisioning : Terraform.
+
+Monitoring Tools  : Grafana/Promethues
+
+Alerting & Notification Tools: Slack & Alertmager
+
+Services Mesh : Istio
+
+observbility : Kiali, Jaeger, Ision 
+
+Secrets management : HashiCorp Vault
+
+Cloud : AWS 
+
+Application Monitoring : DataDog
+
+Loggind System : EFK & ELK
+
+this is testing for git sync

@@ -1,0 +1,28 @@
+{{- if .Values.analysis.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "store-front.fullname" . }}-analysis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "store-front.labels" . | nindent 4 }}
+spec:
+  metrics:
+  {{- if eq .Values.analysis.provider "datadog" }}
+  {{- range .Values.analysis.datadog.metrics }}
+  - name: {{ .name }}
+    interval: {{ .interval }}
+    count: {{ .count }}
+    failureLimit: {{ .failureLimit }}
+    successCondition: {{ .successCondition | quote }}
+    provider:
+      datadog:
+        apiVersion: v2
+        site: {{ $.Values.datadog.site | quote }}
+        secretRef:
+          name: {{ $.Values.analysis.datadog.secretName }}
+        queries:
+          q: {{ .query | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}

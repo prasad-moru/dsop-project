@@ -1,0 +1,83 @@
+# helm-charts/virtual-customer/values.yaml
+replicaCount: 1
+
+image:
+  repository: 357229909289.dkr.ecr.us-east-1.amazonaws.com/dsop/store-virtual-customer
+  tag: "1.0.1-3069d59"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "virtual-customer"
+
+# No service needed - this is a job/cronjob style workload
+service:
+  enabled: false
+
+# Standard Deployment - NO Argo Rollouts
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# No Istio needed for simulator
+istio:
+  enabled: true
+
+# No HPA needed - fixed replica count
+autoscaling:
+  enabled: false
+
+# Resource limits
+resources:
+  requests:
+    cpu: 30m
+    memory: 50Mi
+  limits:
+    cpu: 60m
+    memory: 150Mi
+
+# No probes - this is a background job
+probes:
+  enabled: false
+
+# Environment variables
+env:
+  - name: ORDER_SERVICE_URL
+    value: "http://order-service.application.svc.cluster.local:3000/"
+  - name: ORDERS_PER_HOUR
+    value: "3600"
+
+# Vault Configuration - DISABLED
+vault:
+  enabled: false
+
+# Datadog Configuration
+# apm.enabled: true — uses OpenTelemetry SDK in Rust source code
+# traces are sent to Datadog Agent OTLP receiver on port 4318
+# agent converts OTLP format to Datadog format and forwards to backend
+datadog:
+  enabled: true
+  env: production
+  service: virtual-customer
+  logs:
+    enabled: true
+  apm:
+    enabled: true
+  profiling:
+    enabled: false
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}

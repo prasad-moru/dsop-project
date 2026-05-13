@@ -1,0 +1,15 @@
+[package]
+name = "virtual-worker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.8.5"
+reqwest = { version = "0.12.5", features = ["blocking"] }
+serde = { version = "1.0.204", features = ["derive"] }
+serde_json = "1.0.120"
+
+# OpenTelemetry for APM traces → Datadog Agent OTLP receiver
+opentelemetry       = { version = "0.24", features = ["trace"] }
+opentelemetry_sdk   = { version = "0.24", features = ["trace"] }
+opentelemetry-otlp  = { version = "0.17", features = ["http-proto", "reqwest-blocking-client"] }

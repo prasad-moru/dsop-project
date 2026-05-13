@@ -1,0 +1,65 @@
+# infrastructure/argocd/applications/order-service-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: order-service
+  namespace: argocd
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: order=357229909289.dkr.ecr.us-east-1.amazonaws.com/dsop/order-service
+    argocd-image-updater.argoproj.io/order.update-strategy: semver
+    argocd-image-updater.argoproj.io/order.allow-tags: regexp:^[0-9]+\.[0-9]+\.[0-9]+-.+$
+    argocd-image-updater.argoproj.io/order.ignore-tags: latest, dev, staging
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+    
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: argocd-notifications
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: argocd-notifications
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: order-service
+    app.kubernetes.io/part-of: store-app
+    deployment-strategy: canary
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/prasad-moru/dsop-project.git
+    targetRevision: main
+    path: helm-charts/order-service
+    helm:
+      releaseName: order-service
+      valueFiles:
+        - values.yaml
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: application
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      jsonPointers:
+        - /spec/replicas
+    - group: argoproj.io
+      kind: AnalysisTemplate
+      jsonPointers:
+        - /spec/metrics/0/provider/datadog/interval
+        - /spec/metrics/1/provider/datadog/interval    
+  
+  revisionHistoryLimit: 10

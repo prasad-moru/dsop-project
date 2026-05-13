@@ -1,0 +1,176 @@
+Step 1 — Enable Kubernetes Auth Method
+Go to: Access → Auth Methods → Enable new method → select Kubernetes
+Fill in the same 3 values:
+
+Kubernetes host: https://814F691D5861CB5049391225C90DBCBE.gr7.us-east-1.eks.amazonaws.com
+Service account JWT (from vault-auth-secret)
+CA Certificate (same PEM cert)
+
+
+Go ahead and click Save.
+
+After saving, the next steps will be:
+Step 1 — Create Vault policies (what secrets each service can read)
+Step 2 — Create Vault roles (link each policy to a K8s service account)
+Step 3 — Install Vault Agent Injector in EKS pointing to external Vault
+Step 4 — Update helm charts
+
+
+
+============================================================================
+
+Step_01 ####
+
+ kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
+
+https://D48471657E521665A0002141A209FF13.gr7.us-east-1.eks.amazonaws.com
+
+=======================
+
+Step_02 #####
+
+# Create service account
+kubectl create serviceaccount vault-auth -n default
+
+# Create secret for it (needed in newer k8s versions)
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-auth-secret
+  namespace: default
+  annotations:
+    kubernetes.io/service-account.name: vault-auth
+type: kubernetes.io/service-account-token
+EOF
+
+# Get the JWT token
+kubectl get secret vault-auth-secret -n default -o jsonpath='{.data.token}' | base64 --decode
+
+
+eyJhbGciOiJSUzI1NiIsImtpZCI6IjNwMXhlV3pFaU5LcGM5Y0NVbklseWxwYWw4ci13ZVVjeDg3SV9LTHo3NDQifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJkZWZhdWx0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZWNyZXQubmFtZSI6InZhdWx0LWF1dGgtc2VjcmV0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZXJ2aWNlLWFjY291bnQubmFtZSI6InZhdWx0LWF1dGgiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC51aWQiOiJjYWU4MWFmZC02ZjdiLTQyOGItYjFlYy1iNGRiZjQxNTJiMDIiLCJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6ZGVmYXVsdDp2YXVsdC1hdXRoIn0.UFHa_M5POgrWAepZzHnVNLm21_H4XHuTin4SDnLUkLwTAkh4DXTD0w3Jyr5fzpJlnlLAxgUuGdGW7bd7U0rDDJh0SNr4qOm0_6Z3Mdc98-89NjkfSNKlvtZR_qKcoJoKQIOe3PlrBbddIX7ImLzk1hUzdwyrmzpAU0R_sm0HyULSFKfnc3C6jhIKEme8MGX_AHqU3Aaqpqjj3SkOgmvVWjrIhp2rKuHi6KGraib1GlpiHjHvKp9eybW0Ga55olsLJLbYHxms0ea4ycf9IFBv_4EZlTh1j13T96izSf8I4LAVK_uTQuDmWch6sN9E-3bCHok6A5TF445C6vRYgWRrXA
+============================================================
+
+Step_03 #######
+
+ kubectl get secret vault-auth-secret -n default \
+  -o jsonpath='{.data.ca\.crt}' | base64 --decode
+
+
+  -----BEGIN CERTIFICATE-----
+MIIDBTCCAe2gAwIBAgIIPE4i6OWv7vUwDQYJKoZIhvcNAQELBQAwFTETMBEGA1UE
+AxMKa3ViZXJuZXRlczAeFw0yNjA0MjgxODQ4NDlaFw0zNjA0MjUxODUzNDlaMBUx
+EzARBgNVBAMTCmt1YmVybmV0ZXMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQDSEzY8BbkKBEE6HUHzUJEvald0HVBryVilxmSVMhO4tvzKm1wVR5lD2OyC
+U+OlfRxJDs6bG6fF3GwBgEW6tfjTH7tOHlwR4roGwflQRwOyoCmCMO7TR+rkIHw+
+JDlLlWlWOmOVsDpjZ3Hp499PHAsEO7asIh1vtvbCZ4d9Bix3KkKOxu0HoK/LJrU8
+8sxp7+zY2uYLaxXCymychFJKoN3C4J3nzB1edhwWl5ROsU5tt3Xf8kcIhkb5wi7J
+ogLEK28dJruDvCv55w1thcokhAbkTepN4GT3h7DLgvPr8kRvhop9SbeMmVmXcfiN
+sA5o9mG4QqhBfposQyDwZpqc7CqjAgMBAAGjWTBXMA4GA1UdDwEB/wQEAwICpDAP
+BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR2DzcA1KOUnvV6+6YedYBcEnvVUTAV
+BgNVHREEDjAMggprdWJlcm5ldGVzMA0GCSqGSIb3DQEBCwUAA4IBAQDMIGR4kPva
+XFgsq3j21UTanJwAA+qN284DzYSwRPvLoGi9mDpv/Wvv3wE/DZU4pwrdfnS2VUda
+sPIze5Fxa4YXbUDYLgSjVAR24T7xDMXEzzVEC7P7Nj1EPYXZ/BjtMtX2nJH/TxpO
+A1VNgPPkPoG3KS+A/g8vxqVHmHKYbybykEODBnc/2QL0FNdSDhrWuFoAwx9CXv4F
+LuWUIvW3C/u277EKksXVRUNrrC68lg+ZkyB6RL+84a6zyIfvjzQ5iVMGy3zSQMjU
+l999LjEDRqpYiVSq0oVeUXwn+S8VWjcEyLyJQUI95CjNxM7vASsGxYKMthPzzQfC
+Uesj+5k5SSfR
+-----END CERTIFICATE-----
+
+=====================================
+
+
+kubectl create serviceaccount ai-service -n default
+
+================================================
+
+# Run on EKS machine - get CA cert
+kubectl get secret vault-auth-secret -n default \
+  -o jsonpath='{.data.ca\.crt}' | base64 --decode > /home/devops/eks-ca.crt
+
+# On EKS machine
+kubectl get secret vault-auth-secret -n default \
+  -o jsonpath='{.data.token}' | base64 --decode > /home/devops/vault-auth-token.txt
+
+vault write auth/kubernetes/config \
+  kubernetes_host="https://D48471657E521665A0002141A209FF13.gr7.us-east-1.eks.amazonaws.com" \
+  issuer="https://oidc.eks.us-east-1.amazonaws.com/id/D48471657E521665A0002141A209FF13" \
+  kubernetes_ca_cert=@eks-ca.crt \
+  token_reviewer_jwt=@vault-auth-token.txt
+
+
+
+
+# Role binding for Vault Auth with EKS clsuter 
+
+kubectl create clusterrolebinding vault-auth-delegator \
+  --clusterrole=system:auth-delegator \
+  --serviceaccount=default:vault-auth
+
+# Verify it was created
+kubectl get clusterrolebinding vault-auth-delegator
+
+  ====================================================
+VAULT SETUP GUIDE - DSOP PROJECT
+====================================================
+
+
+====================================================
+STEP 1 - CREATE ACL POLICIES
+====================================================
+Go to: Policies > ACL Policies > Create policy
+
+1. Policy Name: ai-service-policy
+   Content:
+   path "secret/data/ai-service" {
+  capabilities = ["read"]
+}
+
+
+
+====================================================
+STEP 2 - CREATE AUTH ROLES
+====================================================
+Go to: Access > Auth Methods > kubernetes > Roles > Create role
+
+5. 
+Role Name: ai-service
+Alias Name Source: serviceaccount_uid
+Audience: https://kubernetes.default.svc
+Bound Service Account Names: ai-service, vault-auth
+Bound Service Account Namespaces: default
+Generated Token Policies: ai-service-policy
+Generated Token Type: default
+Do Not Attach Default Policy: false
+Token Alias Metadata: [object Object]
+
+====================================================
+STEP 3 - CREATE SECRETS IN VAULT
+====================================================
+Go to: Secrets Engines > kv > Create secret
+
+9. Path: ai-service
+   Keys to add:
+   openai_api_key       = your-openai-api-key
+   openai_org_id        = your-openai-org-id
+
+
+
+
+
+====================================================
+STEP 4 - INSTALL VAULT AGENT INJECTOR IN EKS
+====================================================
+Run these commands from your local machine (kubectl must be pointing to EKS)
+
+13. Add hashicorp helm repo:
+    helm repo add hashicorp https://helm.releases.hashicorp.com
+    helm repo update
+
+14. Install vault injector only (no vault server):
+    helm install vault-agent hashicorp/vault \
+      --set "global.externalVaultAddr=https://vault.devopsproduction.com" \
+      --set "injector.enabled=true" \
+      --set "server.enabled=false" \
+      --namespace vault \
+      --create-namespace

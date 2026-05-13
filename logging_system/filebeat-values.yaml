@@ -1,0 +1,112 @@
+image: "docker.elastic.co/beats/filebeat"
+imageTag: "8.5.1"
+imagePullPolicy: "IfNotPresent"
+
+# ── Resources — increased to prevent OOMKilled on t3.medium ──────────────────
+resources:
+  requests:
+    cpu: "100m"
+    memory: "200Mi"
+  limits:
+    cpu: "300m"
+    memory: "400Mi"
+
+# ── Tolerate all node taints ──────────────────────────────────────────────────
+tolerations:
+  - operator: Exists
+
+
+secretMounts:
+  - name: elasticsearch-master-certs
+    secretName: dsop-elk-master-certs
+    path: /usr/share/filebeat/config/certs
+
+
+# ── Probes — liveness only checks HTTP endpoint, not Logstash connection ──────
+readinessProbe:
+  exec:
+    command:
+      - sh
+      - -c
+      - "curl --fail 127.0.0.1:5066"
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+
+livenessProbe:
+  exec:
+    command:
+      - sh
+      - -c
+      - "curl --fail 127.0.0.1:5066"
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 6
+
+# ── Security context ──────────────────────────────────────────────────────────
+podSecurityContext:
+  runAsUser: 0
+
+securityContext:
+  runAsUser: 0
+  privileged: false
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - DAC_READ_SEARCH
+
+# ── Pod labels ────────────────────────────────────────────────────────────────
+podLabels:
+  project: dsop-project
+  component: filebeat
+
+# ── Filebeat configuration ────────────────────────────────────────────────────
+filebeatConfig:
+  filebeat.yml: |
+    filebeat.inputs:
+      - type: container
+        paths:
+          - /var/log/containers/*.log
+        processors:
+          - add_kubernetes_metadata:
+              host: ${NODE_NAME}
+              matchers:
+                - logs_path:
+                    logs_path: "/var/log/containers/"
+          - add_fields:
+              target: ''
+              fields:
+                cluster: dsop-project-dev
+                environment: dev
+
+    processors:
+      - drop_event:
+          when:
+            regexp:
+              message: "GET /(health|healthz|ready|readyz|ping|livez|metrics) HTTP"
+      - drop_event:
+          when:
+            regexp:
+              message: "kube-probe/"
+      - drop_event:
+          when:
+            equals:
+              kubernetes.namespace: "logging"
+
+    output.logstash:
+      hosts: ["logstash-logstash:5044"]
+      compression_level: 3
+      timeout: 30
+      worker: 1
+      bulk_max_size: 256
+
+    logging.level: warning
+    logging.to_files: false
+    monitoring.enabled: false
+
+    http.enabled: true
+    http.host: 127.0.0.1
+    http.port: 5066

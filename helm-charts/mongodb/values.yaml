@@ -1,0 +1,91 @@
+replicaCount: 1
+
+image:
+  repository: prasad890/dsop-mongo
+  tag: "6.0.6"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: "mongodb"
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "mongodb"
+
+service:
+  name: mongodb
+  type: ClusterIP
+  port: 27017
+  targetPort: 27017
+
+# Persistence configuration - AWS EBS volume
+persistence:
+  enabled: true
+  storageClass: "gp2"
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 800Mi
+  limits:
+    cpu: 500m
+    memory: 2000Mi
+
+# Health probes
+probes:
+  liveness:
+    exec:
+      command:
+        - mongosh
+        - "--quiet"
+        - "--eval"
+        - "db.adminCommand('ping')"
+    initialDelaySeconds: 60
+    periodSeconds: 20
+    timeoutSeconds: 15
+    failureThreshold: 3
+  readiness:
+    exec:
+      command:
+        - mongosh
+        - "--quiet"
+        - "--eval"
+        - "db.adminCommand('ping')"
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 15
+    failureThreshold: 3
+
+# Vault Configuration
+# Template stored here as plain string - Helm does NOT process {{ }} inside
+# .Values strings unless tpl function is used. Same pattern as ai-service.
+vault:
+  enabled: true
+  address: "https://vault.devopsproduction.com"
+  role: "mongodb"
+  secrets:
+    mongodb:
+      path: "secret/data/mongodb"
+      template: |
+        {{- with secret "secret/data/mongodb" -}}
+        export MONGO_INITDB_ROOT_USERNAME="{{ .Data.data.username }}"
+        export MONGO_INITDB_ROOT_PASSWORD="{{ .Data.data.password }}"
+        export ORDER_DB_URI="mongodb://{{ .Data.data.username }}:{{ .Data.data.password }}@mongodb:27017/orderdb?authSource=admin"
+        {{- end }}
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+
+podAnnotations:
+  traffic.sidecar.istio.io/excludeOutboundPorts: "8200,8201"
+
+podLabels: {}

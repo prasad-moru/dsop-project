@@ -1,0 +1,38 @@
+      - USE_AZURE_OPENAI=False
+      - USE_LOCAL_LLM=False
+      - OPENAI_API_KEY=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         # ✅ fill this in - required!
+      - OPENAI_ORG_ID=org-MQENs1E0HzS2Bg6rgEc4jkR6     # ✅ already filled - good
+      - OPENAI_IMAGE_MODEL=dall-e-3  
+
+
+In Order =======>>>>>>>
+
+Python installation in ubuntu 
+
+sudo apt update
+
+sudo apt install python3
+
+sudo apt install uvicorn
+
+python3 --version
+
+sudo apt install python3-pip python3-venv
+
+
+export USE_AZURE_OPENAI=False 
+export USE_LOCAL_LLM=False
+export OPENAI_API_KEY=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    
+export OPENAI_ORG_ID=org-MQENs1E0HzS2Bg6rgEc4jkR6
+export OPENAI_IMAGE_MODEL=dall-e-3 
+
+
+cd aks-store-demo/src/ai-service/
+
+python3 -m venv .venv
+
+source .venv/bin/activate
+
+pip3 install -r requirements.txt
+
+uvicorn main:app --host 127.0.0.1 --port 5001

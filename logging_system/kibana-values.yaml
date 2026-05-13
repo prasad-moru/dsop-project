@@ -1,0 +1,134 @@
+# =============================================================================
+# kibana-values.yaml — FINAL PRODUCTION VERSION
+# Helm chart : elastic/kibana  version: 8.5.1
+# Cluster    : dsop-project-dev (EKS)
+# ES cluster : dsop-elk (service: elasticsearch-master)
+#
+# All known issues fixed:
+#   - No username/password (8.x forbids elastic superuser)
+#   - No logging.verbose (removed in 8.x)
+#   - No kibana.defaultAppId (removed in 8.x)
+#   - No ops.interval (removed in 8.x)
+#   - pathType: ImplementationSpecific + path: /* (fixes ALB 404)
+#   - No group.name (dedicated ALB for Kibana)
+#   - backend-protocol: HTTP (Kibana pod listens on HTTP internally)
+#   - success-codes: 200-399 (ALB accepts 302 redirect from Kibana)
+#
+# Install:
+#   helm install kibana elastic/kibana \
+#     --version 8.5.1 \
+#     -f kibana-values.yaml \
+#     -n logging \
+#     --timeout 15m
+#
+# Login:
+#   URL      : https://kibana.devopsproduction.com
+#   Username : elastic
+#   Password : kubectl get secret elasticsearch-master-credentials \
+#                -n logging -o jsonpath='{.data.password}' | base64 -d
+# =============================================================================
+
+image: "docker.elastic.co/kibana/kibana"
+imageTag: "8.5.1"
+imagePullPolicy: "IfNotPresent"
+
+replicas: 1
+
+elasticsearchCertificateSecret: "dsop-elk-master-certs"        
+elasticsearchCredentialSecret: "dsop-elk-master-credentials" 
+
+# ── Kibana configuration ──────────────────────────────────────────────────────
+# Only valid Kibana 8.x keys — all deprecated keys removed.
+# No username/password — chart uses service account token automatically.
+kibanaConfig:
+  kibana.yml: |
+    elasticsearch.hosts: ["https://elasticsearch-master:9200"]
+    elasticsearch.ssl.verificationMode: none
+    server.host: "0.0.0.0"
+    server.shutdownTimeout: "5s"
+    server.publicBaseUrl: "https://kibana.devopsproduction.com"
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: "100m"
+    memory: "512Mi"
+  limits:
+    cpu: "500m"
+    memory: "1Gi"
+
+# ── Health checks — generous delays for t3.medium ────────────────────────────
+readinessProbe:
+  failureThreshold: 3
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  successThreshold: 3
+  timeoutSeconds: 5
+
+livenessProbe:
+  failureThreshold: 3
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 5
+
+# ── Service ───────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 5601
+  labels:
+    project: dsop-project
+
+# ── ALB Ingress — dedicated ALB for Kibana (no group.name) ───────────────────
+# pathType: ImplementationSpecific + path: /* ensures ALB uses /* rule
+# which routes /login, /api/*, /app/* correctly.
+# Without this, ALB uses exact match / and returns 404 on all sub-paths.
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:357229909289:certificate/7d123239-4cc6-40a0-9ead-a0320842518e"
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: "/"
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-port: "5601"
+    alb.ingress.kubernetes.io/success-codes: "200-399"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+  hosts:
+    - host: kibana.devopsproduction.com
+      paths:
+        - path: /*
+          pathType: ImplementationSpecific
+  className: alb
+
+# ── Labels ────────────────────────────────────────────────────────────────────
+labels:
+  project: dsop-project
+  component: kibana
+
+podLabels:
+  project: dsop-project
+  component: kibana
+
+# ── Security context ──────────────────────────────────────────────────────────
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# ── Anti-affinity — prefer different node from Elasticsearch ─────────────────
+antiAffinity: "soft"
+antiAffinityTopologyKey: "kubernetes.io/hostname"
+
+tolerations: []

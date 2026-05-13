@@ -1,0 +1,44 @@
+install argocd cli 
+install argocd cli setup in ubuntu machine. 
+
+curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/download/v3.1.8/argocd-linux-amd64
+chmod +x argocd
+sudo mv argocd /usr/local/bin/
+
+
+# Login
+argocd login argocd.devopsproduction.com \
+  --username admin \
+  --password rLdcb26Msi5aqE7S \
+  --grpc-web \
+  --insecure 
+
+argocd account list
+
+kubectl patch configmap argocd-cm -n argocd \
+  --type merge \
+  -p '{"data":{"accounts.admin":"apiKey,login"}}'
+
+OR 
+
+kubectl edit argocd-cm -n argocd
+ data:
+   accounts.admin: apiKey,login
+
+argocd account list
+
+argocd account list-tokens
+
+argocd account generate-token --account admin
+
+token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJhZG1pbjphcGlLZXkiLCJuYmYiOjE3Nzc0MDc0ODgsImlhdCI6MTc3NzQwNzQ4OCwianRpIjoiMWQwZGVkOWYtMjM5ZS00MTcxLWFhMjItMjUyN2JhZjI4MTU4In0.ps2KLmGe05_ViMUNY7ql-fUcH8sxVmyltmqwecp4Nfk
+
+
+
+argocd account list-tokens --account admin
+
+
+
+argocd account delete-token \
+  --account admin \
+  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJhZG1pbjphcGlLZXkiLCJuYmYiOjE3NzY2OTY0MjgsImlhdCI6MTc3NjY5NjQyOCwianRpIjoiYjdhZWQ0MjktZGFkYy00NWU5LTgzMmEtYWYyODc3NDE2NWY4In0.OgiY-uTTzKjBijRmdS-UgvFlDKb4oZlPCXW_mN4wdzU

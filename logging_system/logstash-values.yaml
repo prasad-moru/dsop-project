@@ -1,0 +1,171 @@
+image: "docker.elastic.co/logstash/logstash"
+imageTag: "8.5.1"
+imagePullPolicy: "IfNotPresent"
+
+replicas: 1
+
+# JVM heap - 512MB for t3.medium demo
+logstashJavaOpts: "-Xmx512m -Xms512m"
+
+# Resources
+resources:
+  requests:
+    cpu: "300m"
+    memory: "700Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+# Persistent queue disabled - use memory queue (fixes disk allocation error)
+persistence:
+  enabled: true
+  storageClass: "gp2"
+  accessMode: ReadWriteOnce
+  size: 5Gi
+
+# Logstash config
+logstashConfig:
+  logstash.yml: |
+    http.host: 0.0.0.0
+    xpack.monitoring.enabled: false
+    pipeline.workers: 2
+    pipeline.batch.size: 125
+    pipeline.batch.delay: 50
+    queue.type: memory
+
+# Pipeline - fixed filter with correct field names and no special characters
+logstashPipeline:
+  logstash.conf: |
+    input {
+      beats {
+        port => 5044
+        client_inactivity_timeout => 60
+      }
+    }
+
+    filter {
+      if [kubernetes] {
+        mutate {
+          add_field => {
+            "namespace"      => "%{[kubernetes][namespace]}"
+            "pod_name"       => "%{[kubernetes][pod][name]}"
+            "container_name" => "%{[kubernetes][container][name]}"
+            "node_name"      => "%{[kubernetes][node][name]}"
+          }
+        }
+        if [kubernetes][labels][app] {
+          mutate {
+            add_field => { "app" => "%{[kubernetes][labels][app]}" }
+          }
+        } else {
+          mutate {
+            add_field => { "app" => "unknown" }
+          }
+        }
+        mutate {
+          remove_field => ["kubernetes"]
+        }
+      }
+
+      mutate {
+        remove_field => ["cluster", "environment"]
+        add_field => {
+          "cluster"     => "dsop-project-dev"
+          "environment" => "dev"
+        }
+      }
+
+      if [message] =~ /GET\s+\/(health|healthz|ready|readyz|ping|livez|metrics)\s+HTTP/ {
+        drop { }
+      }
+
+      if [message] =~ /kube-probe/ {
+        drop { }
+      }
+
+      if [message] =~ /FATAL|CRITICAL/ {
+        mutate { add_field => { "level" => "FATAL" } }
+      } else if [message] =~ /ERROR/ {
+        mutate { add_field => { "level" => "ERROR" } }
+      } else if [message] =~ /WARN/ {
+        mutate { add_field => { "level" => "WARN" } }
+      } else if [message] =~ /DEBUG/ {
+        mutate { add_field => { "level" => "DEBUG" } }
+      } else {
+        mutate { add_field => { "level" => "INFO" } }
+      }
+
+      mutate {
+        remove_field => ["agent", "ecs", "host", "input", "tags", "event"]
+      }
+    }
+
+    output {
+      elasticsearch {
+        hosts => ["https://elasticsearch-master:9200"]
+        user => "elastic"
+        password => "7Lx2t7F7pLmW588f"
+        ssl => true
+        ssl_certificate_verification => false
+        index => "logstash-%{+YYYY.MM.dd}"
+      }
+    }
+
+# Service - exposes Beats input to Filebeat
+service:
+  type: ClusterIP
+  ports:
+    - name: beats
+      port: 5044
+      protocol: TCP
+      targetPort: 5044
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+
+# Labels
+labels:
+  project: dsop-project
+  component: logstash
+
+podLabels:
+  project: dsop-project
+  component: logstash
+
+# Anti-affinity - prefer different node from Elasticsearch
+antiAffinity: "soft"
+antiAffinityTopologyKey: "kubernetes.io/hostname"
+
+# Health checks - generous delays for t3.medium
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 90
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+# Security context
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+
+tolerations: []

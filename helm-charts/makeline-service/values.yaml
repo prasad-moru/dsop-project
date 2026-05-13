@@ -1,0 +1,248 @@
+# helm-charts/makeline-service/values.yaml
+replicaCount: 1
+
+image:
+  repository: 357229909289.dkr.ecr.us-east-1.amazonaws.com/dsop/makeline-service
+  tag: "1.0.2-4818cb7"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "makeline-service"
+
+service:
+  name: makeline-service
+  type: ClusterIP
+  port: 3001
+  targetPort: 3001
+
+# Argo Rollouts Strategy
+strategy:
+  type: canary
+  canary:
+    dynamicStableScale: true   
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 30s           
+      - analysis:
+          templates:
+            - templateName: makeline-service-analysis
+      - setWeight: 40
+      - pause:
+          duration: 30s          
+      - analysis:
+          templates:
+            - templateName: makeline-service-analysis
+      - setWeight: 60
+      - pause:
+          duration: 30s          
+      - analysis:
+          templates:
+            - templateName: makeline-service-analysis
+      - setWeight: 80
+      - pause:
+          duration: 30s         
+      - analysis:
+          templates:
+            - templateName: makeline-service-analysis
+      - setWeight: 100
+
+# Istio Configuration
+istio:
+  enabled: true
+  gateway:
+    enabled: false
+  virtualService:
+    enabled: true
+    hosts:
+      - makeline-service
+  destinationRule:
+    enabled: true
+
+# HPA Configuration
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 1
+          periodSeconds: 15
+      selectPolicy: Max
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Probes
+probes:
+  startup:
+    httpGet:
+      path: /health
+      port: 3001
+    initialDelaySeconds: 20
+    failureThreshold: 5
+    periodSeconds: 10
+  readiness:
+    httpGet:
+      path: /health
+      port: 3001
+    initialDelaySeconds: 3
+    failureThreshold: 3
+    periodSeconds: 5
+  liveness:
+    httpGet:
+      path: /health
+      port: 3001
+    initialDelaySeconds: 3
+    failureThreshold: 5
+    periodSeconds: 3
+
+# Environment variables
+env:
+  - name: ORDER_QUEUE_URI
+    value: "amqp://rabbitmq.platform.svc.cluster.local:5672"
+  - name: ORDER_QUEUE_HOSTNAME
+    value: "rabbitmq.platform.svc.cluster.local"
+  - name: ORDER_QUEUE_PORT
+    value: "5672"
+  - name: ORDER_QUEUE_NAME
+    value: "orders"
+  - name: ORDER_DB_NAME
+    value: "orderdb"
+  - name: ORDER_DB_COLLECTION_NAME
+    value: "orders"
+  - name: DD_SITE
+    value: "us5.datadoghq.com"
+
+# Init Containers
+initContainers:
+  - name: wait-for-rabbitmq
+    image: busybox:1.36
+    command:
+      - 'sh'
+      - '-c'
+      - 'until nc -zv rabbitmq.platform.svc.cluster.local 5672; do echo waiting for rabbitmq; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 1m
+        memory: 50Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+  - name: wait-for-mongodb
+    image: busybox:1.36
+    command:
+      - 'sh'
+      - '-c'
+      - 'until nc -zv mongodb.platform.svc.cluster.local 27017; do echo waiting for mongodb; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 1m
+        memory: 50Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+# Vault Configuration
+vault:
+  enabled: true
+  address: "https://vault.devopsproduction.com"
+  role: "makeline-service"
+  secrets:
+    makeline-service:
+      path: "secret/data/makeline-service"
+      template: |-
+        {{- with secret "secret/data/makeline-service" -}}
+        export ORDER_QUEUE_USERNAME="{{ .Data.data.rabbitmq_username }}"
+        export ORDER_QUEUE_PASSWORD="{{ .Data.data.rabbitmq_password }}"
+        export ORDER_DB_URI="mongodb://{{ .Data.data.mongodb_username }}:{{ .Data.data.mongodb_password }}@mongodb.platform.svc.cluster.local:27017"
+        {{- end -}}
+
+# Datadog Configuration
+datadog:
+  enabled: true
+  site: "us5.datadoghq.com"
+  env: production
+  service: makeline-service
+  logs:
+    enabled: true
+  apm:
+    enabled: true
+    language: golang
+  profiling:
+    enabled: false
+
+# Prometheus Metrics
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    path: /metrics
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+
+podAnnotations:
+  traffic.sidecar.istio.io/excludeOutboundPorts: "8200,8201,443"
+  proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+podLabels: {}
+
+# Analysis Template Configuration
+analysis:
+  enabled: true
+  provider: datadog
+  datadog:
+    secretName: datadog-secret
+    metrics:
+      # values.yaml - remove default() wrappers from queries
+      - name: error-rate
+        query: "avg:trace.http.request.errors{service:makeline-service,env:production}.as_rate()"
+        successCondition: "default(result, 0) < 0.05"   # default() stays here, not in query
+        failureLimit: 1
+        # FIX 3: Added consecutiveErrorLimit >= count to prevent premature Error status
+        consecutiveErrorLimit: 5
+        interval: 10s
+        count: 3
+
+      - name: p95-latency
+        query: "avg:trace.http.request.duration.by.service.95p{service:makeline-service,env:production}"
+        successCondition: "default(result, 0) < 1000"
+        failureLimit: 1
+        consecutiveErrorLimit: 5
+        interval: 10s
+        count: 3

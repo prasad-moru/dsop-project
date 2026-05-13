@@ -1,0 +1,9 @@
+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
+
+git remote set-url origin https://github.com/prasad-moru/dsop-project.git
+
+
+git clone https://prasadmoru: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@github.com/prasad-moru/dsop-project.git
+
+git config --global user.email "prasadmoru@gmail.com"
+  git config --global user.name "prasadmoru"

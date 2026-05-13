@@ -1,0 +1,5 @@
+Jekins Upgrading Ticket
+
+Azure Devops repos Permission is pending for creating and testing Pipeline. 
+
+i have seen two Jenkins server running with (http://jenkins.autowares.com/) and other one is (http://leroy.dc.autowares.com) are we using both?

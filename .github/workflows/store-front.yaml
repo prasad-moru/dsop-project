@@ -1,0 +1,247 @@
+name: dsop-store-front
+
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'src/store-front/**'
+  #     - '.github/workflows/store-front.yaml'
+
+permissions:
+  id-token: write    # required for Vault JWT auth
+  contents: write    # required for git push (helm tag update)
+
+env:
+  SERVICE_NAME: dsop/store-front
+  SERVICE_PATH: src/store-front
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  SONAR_HOST_URL: https://sonar.devopsproduction.com
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_SF }}
+  VAULT_ADDR: https://vault.devopsproduction.com
+
+jobs:
+  # ==========================================
+  # JOB 1: SonarQube Code Analysis
+  # ==========================================
+  sonarqube-analysis:
+    name: SonarQube Code Analysis
+    runs-on: [self-hosted, dsop-runner]
+    environment: dsop-project-dev
+
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      short_sha: ${{ steps.tag.outputs.short_sha }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate Image Tag
+        id: tag
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(git rev-parse --short=7 HEAD || echo "nosha")
+
+          LATEST_TAG=$(aws ecr describe-images \
+            --repository-name "${{ env.SERVICE_NAME }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "${LATEST_TAG}" ] || [ "${LATEST_TAG}" = "None" ] || [ "${LATEST_TAG}" = "null" ]; then
+            BASE_VERSION="1.0.0"
+          else
+            if [[ ${LATEST_TAG} =~ ^([0-9]+\.[0-9]+\.[0-9]+)-.*$ ]]; then
+              BASE_VERSION="${BASH_REMATCH[1]}"
+            elif [[ ${LATEST_TAG} =~ ^([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              BASE_VERSION="${LATEST_TAG}"
+            else
+              BASE_VERSION="1.0.0"
+            fi
+          fi
+
+          IFS='.' read -r major minor patch <<< "${BASE_VERSION}"
+          NEXT_PATCH=$((patch + 1))
+          VERSION="${major}.${minor}.${NEXT_PATCH}"
+          IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "### 🏷️ Image Tag: ${IMAGE_TAG}" >> $GITHUB_STEP_SUMMARY
+
+      - name: SonarQube Analysis
+        working-directory: ${{ env.SERVICE_PATH }}
+        run: |
+          sonar-scanner \
+            -Dsonar.projectKey=store-front-app \
+            -Dsonar.projectName="store-front-app" \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ env.SONAR_TOKEN }} \
+            -Dsonar.projectVersion=${{ steps.tag.outputs.version }}
+          echo "### 🔍 SonarQube: ${{ env.SONAR_HOST_URL }}/dashboard?id=store-front-app" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================
+  # JOB 2: OWASP Dependency Check
+  # ==========================================
+  owasp-dependency-check:
+    name: OWASP Dependency Check
+    runs-on: [self-hosted, dsop-runner]
+    environment: dsop-project-dev
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: OWASP Dependency Check
+        working-directory: ${{ env.SERVICE_PATH }}
+        run: |
+          mkdir -p dependency-check-report
+          if [ ! -f dependency-check-suppressions.xml ]; then
+            cat > dependency-check-suppressions.xml << 'SUPPEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+          </suppressions>
+          SUPPEOF
+          fi
+          dependency-check \
+            --project "${{ env.SERVICE_NAME }}" \
+            --scan . \
+            --format ALL \
+            --out ./dependency-check-report \
+            --suppression ./dependency-check-suppressions.xml \
+            --enableExperimental \
+            --disableOssIndex \
+            2>&1 | tee dependency-check.log || true
+
+      - name: Upload OWASP Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-dependency-report-${{ github.run_number }}
+          path: |
+            ${{ env.SERVICE_PATH }}/dependency-check-report/
+            ${{ env.SERVICE_PATH }}/dependency-check.log
+          retention-days: 30
+
+  # ==========================================
+  # JOB 3: Build, Scan, and Push to ECR
+  # ==========================================
+  build-scan-push:
+    name: Build, Trivy Scan & Push to ECR
+    runs-on: [self-hosted, dsop-runner]
+    environment: dsop-project-dev
+    needs: [sonarqube-analysis, owasp-dependency-check]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ─── Fetch Datadog RUM keys from Vault using JWT ───────────────────
+      # Same JWT auth pattern as eks_infra_deployment.yaml
+      # Vault role: github-actions must have access to secret/data/datadog/rum
+      # Keys stored as: application_id, client_token
+      - name: Fetch Datadog RUM Secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions
+          jwtGithubAudience: "https://github.com/prasad-moru"
+          exportEnv: true
+          secrets: |
+            secret/data/datadog/rum application_id | DD_RUM_APPLICATION_ID ;
+            secret/data/datadog/rum client_token   | DD_RUM_CLIENT_TOKEN
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
+      # Build args match Dockerfile ARG names exactly:
+      #   VITE_DATADOG_RUM_ENABLED, VITE_DATADOG_RUM_APPLICATION_ID,
+      #   VITE_DATADOG_RUM_CLIENT_TOKEN, VITE_DATADOG_SITE,
+      #   VITE_DATADOG_SERVICE, VITE_DATADOG_ENV, VITE_APP_VERSION
+      - name: Build Docker Image
+        working-directory: ${{ env.SERVICE_PATH }}
+        run: |
+          docker build \
+            --no-cache \
+            -t ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} \
+            --build-arg APP_VERSION=${{ needs.sonarqube-analysis.outputs.version }} \
+            --build-arg VITE_APP_VERSION=${{ needs.sonarqube-analysis.outputs.version }} \
+            --build-arg VITE_DATADOG_RUM_ENABLED="true" \
+            --build-arg VITE_DATADOG_RUM_APPLICATION_ID="${{ env.DD_RUM_APPLICATION_ID }}" \
+            --build-arg VITE_DATADOG_RUM_CLIENT_TOKEN="${{ env.DD_RUM_CLIENT_TOKEN }}" \
+            --build-arg VITE_DATADOG_SITE="us5.datadoghq.com" \
+            --build-arg VITE_DATADOG_SERVICE="store-front" \
+            --build-arg VITE_DATADOG_ENV="production" \
+            .
+          echo "### 🐳 Image built with Datadog RUM embedded" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create Trivy Reports Directory
+        run: mkdir -p trivy-reports
+
+      - name: Trivy Scan - Table Format
+        run: |
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --format table \
+            --output trivy-reports/trivy-report-table.txt \
+            ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} || true
+
+      - name: Trivy Scan - JSON Format
+        run: |
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output trivy-reports/trivy-report.json \
+            ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} || true
+
+      - name: Upload Trivy Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-security-report-${{ needs.sonarqube-analysis.outputs.image_tag }}
+          path: trivy-reports/
+          retention-days: 30
+
+      - name: Tag and Push to ECR
+        run: |
+          docker tag \
+            ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} \
+            ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }}
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }}
+          echo "### 📤 Pushed: ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Clean Up Local Docker Images
+        if: always()
+        run: |
+          docker rmi ${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} 2>/dev/null || true
+          docker rmi ${{ env.ECR_REGISTRY }}/${{ env.SERVICE_NAME }}:${{ needs.sonarqube-analysis.outputs.image_tag }} 2>/dev/null || true
+          docker image prune -f

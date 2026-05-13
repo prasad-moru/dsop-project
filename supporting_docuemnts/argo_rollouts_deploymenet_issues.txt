@@ -1,0 +1,9 @@
+That's the root cause.
+The argo-rollouts controller is running in the argocd namespace and looks for the datadog-secret in its own namespace (argocd), not in the application namespace where you created it. The secret exists in the wrong namespace.
+Fix it by copying the secret into the argocd namespace:
+
+
+
+kubectl get secret datadog-secret -n application -o yaml \
+  | sed 's/namespace: application/namespace: argocd/' \
+  | kubectl apply -f -

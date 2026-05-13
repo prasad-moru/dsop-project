@@ -1,0 +1,84 @@
+# =============================================================================
+# jaeger-values.yaml
+# Helm chart : jaegertracing/jaeger
+# Repo       : https://jaegertracing.github.io/helm-charts
+# Version    : 0.71.x
+#
+# Mode       : all-in-one (single pod, in-memory storage)
+# Storage    : memory (no ES needed — sufficient for Udemy demo)
+# Istio      : 1.29.2 — sends traces via Zipkin protocol to port 9411
+#
+# Install:
+#   helm repo add jaegertracing https://jaegertracing.github.io/helm-charts
+#   helm repo update
+#   helm install jaeger jaegertracing/jaeger \
+#     -f jaeger-values.yaml \
+#     -n istio-system \
+#     --create-namespace
+# =============================================================================
+
+# Use all-in-one deployment (collector + query + UI in one pod)
+provisionDataStore:
+  cassandra: false
+  elasticsearch: false
+  kafka: false
+
+allInOne:
+  enabled: true
+  image:
+    tag: "1.57.0"
+
+  # Resources — lightweight for t3.medium
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # In-memory storage limits
+  extraEnv:
+    - name: MEMORY_MAX_TRACES
+      value: "50000"
+    - name: QUERY_BASE_PATH
+      value: /jaeger
+
+  # Ingress for Jaeger UI via ALB
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      # TODO: replace with your ACM cert ARN
+      alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:357229909289:certificate/7d123239-4cc6-40a0-9ead-a0320842518e"
+      alb.ingress.kubernetes.io/backend-protocol: HTTP
+      alb.ingress.kubernetes.io/healthcheck-path: "/"
+      alb.ingress.kubernetes.io/success-codes: "200-399"
+      alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    hosts:
+      - host: jaeger.devopsproduction.com    # TODO: update to your domain
+        paths:
+          - path: /*
+            pathType: ImplementationSpecific
+
+# Disable separate components (all-in-one handles everything)
+collector:
+  enabled: false
+agent:
+  enabled: false
+query:
+  enabled: false
+
+# Service for Zipkin collector (Istio sends traces here)
+# Port 9411 = Zipkin protocol (what Istio uses by default)
+service:
+  type: ClusterIP
+
+podLabels:
+  app: jaeger
+  project: dsop-project

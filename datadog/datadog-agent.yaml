@@ -1,0 +1,38 @@
+kind: "DatadogAgent"
+apiVersion: "datadoghq.com/v2alpha1"
+metadata:
+  name: "datadog"
+  namespace: "datadog"
+spec:
+  global:
+    clusterName: "dsop-project"
+    site: "us5.datadoghq.com"
+    credentials:
+      apiSecret:
+        secretName: "datadog-secret"
+        keyName: "api-key"
+    registry: "public.ecr.aws/datadog"
+    tags:
+      - "env:production"
+  features:
+    clusterChecks:
+      enabled: true
+    orchestratorExplorer:
+      enabled: true
+    apm:
+      enabled: true
+      hostPortConfig:
+        enabled: true
+        hostPort: 8126
+    logCollection:
+      enabled: true
+      containerCollectAll: true
+    otlp:
+      receiver:
+        protocols:
+          http:
+            enabled: true
+            endpoint: "0.0.0.0:4318"
+          grpc:
+            enabled: true
+            endpoint: "0.0.0.0:4317"

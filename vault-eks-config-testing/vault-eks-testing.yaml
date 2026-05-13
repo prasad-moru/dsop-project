@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ai-service-vault-test
+  namespace: default
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/address: "https://vault.devopsproduction.com"
+    vault.hashicorp.com/role: "ai-service"
+    vault.hashicorp.com/agent-inject-secret-openai.env: "secret/data/ai-service"
+    vault.hashicorp.com/agent-inject-template-openai.env: |
+      {{- with secret "secret/data/ai-service" -}}
+      export OPENAI_API_KEY="{{ .Data.data.openai_api_key }}"
+      export OPENAI_ORG_ID="{{ .Data.data.openai_org_id }}"
+      {{- end -}}
+spec:
+  serviceAccountName: ai-service
+  containers:
+  - name: app
+    image: nginx:alpine
+    command:
+      - "sh"
+      - "-c"
+      - |
+        echo "=== Waiting for vault secrets ==="
+        sleep 5
+        echo "=== Files in /vault/secrets/ ==="
+        ls -la /vault/secrets/
+        echo "=== Contents of openai.env ==="
+        cat /vault/secrets/openai.env
+        echo "=== Sourcing secrets ==="
+        source /vault/secrets/openai.env
+        echo "=== Verifying ==="
+        echo "OPENAI_API_KEY first 20 chars: ${OPENAI_API_KEY:0:20}..."
+        echo "OPENAI_ORG_ID: $OPENAI_ORG_ID"
+        echo "=== SUCCESS ==="
+        sleep 3600

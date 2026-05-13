@@ -1,0 +1,38 @@
+
+
+Production server
+
+Jenkins upgrade: 
+
+URL http://leroy.dc.autowares.com
+
+Host address: 10.1.28.74 
+
+current server configuration
+
+PRETTY_NAME="Debian GNU/Linux 8 (jessie)"
+
+java version "1.8.0_72"
+
+Jenkins version : Jenkins ver. 1.650
+
+production is planning to upgrading Jenkins. till now only Testing server Jenkin upgrade is completed. 
+
+
+
+
+Testing server Jenkin upgrade is completed. 
+
+Testing Server:
+
+current server configuration
+
+NAME="Debian GNU/Linux 8 (jessie)"
+
+java version : openjdk 17.0.9 for supporting to latest Jenkins required Java 17 or above. so i preferred this. need clarity any maven or java build get impacted or not. which java Jenkins builds are using. 
+
+host address: 10.1.28.75
+
+Jenkins Version : Jenkins 2.440.3  ( Debian Linux 8 is not supporting to latest Jenkins Version(Version 2.541.2  ) due to lib dependences  
+
+targeted version : Version 2.541.2  

@@ -1,0 +1,55 @@
+# deployment_automation_argocd/applications/virtual-customer-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: virtual-customer
+  namespace: argocd
+  annotations:
+    # fixed: correct ECR account 357229909289, correct repo name dsop/virtual-customer
+    argocd-image-updater.argoproj.io/image-list: virtual-customer=357229909289.dkr.ecr.us-east-1.amazonaws.com/dsop/store-virtual-customer
+    argocd-image-updater.argoproj.io/virtual-customer.update-strategy: semver
+    argocd-image-updater.argoproj.io/virtual-customer.allow-tags: regexp:^[0-9]+\.[0-9]+\.[0-9]+-.+$
+    argocd-image-updater.argoproj.io/virtual-customer.ignore-tags: latest, dev, staging
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: argocd-notifications
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: argocd-notifications
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: virtual-customer
+    app.kubernetes.io/part-of: store-app
+    deployment-strategy: rolling
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/prasad-moru/dsop-project.git   # fixed: was GenAiStoreApp.git
+    targetRevision: main
+    path: helm-charts/virtual-customer
+    helm:
+      releaseName: virtual-customer
+      valueFiles:
+        - values.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: application
+
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  revisionHistoryLimit: 10

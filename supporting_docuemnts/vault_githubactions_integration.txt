@@ -1,0 +1,61 @@
+
+login into server EC2 instance. 
+
+#1
+ssh -i "dsop-project.pem" ubuntu@ec2-98-88-56-200.compute-1.amazonaws.com
+
+#2
+export VAULT_ADDR='http://127.0.0.1:8200'
+
+#3
+vault auth enable jwt
+
+#4
+vault write auth/jwt/config \
+  bound_issuer="https://token.actions.githubusercontent.com" \
+  oidc_discovery_url="https://token.actions.githubusercontent.com"
+
+vault read auth/jwt/config
+
+#5
+cat > /tmp/vault-role.json <<EOF
+{
+  "role_type": "jwt",
+  "bound_audiences": ["https://github.com/prasad-moru"],
+  "user_claim": "actor",
+  "bound_claims_type": "glob",
+  "bound_claims": {
+    "sub": "repo:prasad-moru/dsop-project:*"
+  },
+  "policies": ["github-actions"],
+  "ttl": "9h"
+}
+EOF
+
+#6
+vault write auth/jwt/role/github-actions @/tmp/vault-role.json
+
+vault auth list
+vault policy read github-actions
+
+#10
+vault policy write github-actions - <<EOF
+path "secret/data/aws/credentials" {
+  capabilities = ["read"]
+}
+EOF
+
+#7  Store your secrets
+
+ Enable KV v2 secrets engine if not already enabled
+vault secrets enable -path=secret kv-v2
+
+#8 Store your AWS credentials
+vault kv put secret/aws/credentials \
+  access_key="AKIAVGLEP2UUWYOQMBGN" \
+  secret_key="wQDgIj5qcOhz1DJJYVmFbtxbSBYkIsmRr7B4MtYd"
+
+#9 Verify
+vault kv get secret/aws/credentials
+
+

@@ -1,0 +1,99 @@
+import { datadogRum } from '@datadog/browser-rum';
+
+datadogRum.init({
+    applicationId: '6bb2a68c-0cac-43cf-a67c-9ebcdaf4ab4d',
+    clientToken: 'pubde4e0d2a707b33d38c432ed6c5a3419a',
+    site: 'us5.datadoghq.com',
+    service: '<SERVICE_NAME>',
+    env: '<ENV_NAME>',				// e.g. 'prod', 'staging-1', 'dev'
+    version: '<VERSION_NUMBER>',	// e.g. '1.0.0'
+    sessionSampleRate: 100,			// capture 100% of sessions
+    sessionReplaySampleRate: 20,	// capture 20% of sessions with replay
+    trackResources: true,			// Enable Resource tracking
+    trackUserInteractions: true,	// Enable Action tracking
+    trackLongTasks: true,			// Enable Long Tasks tracking
+    
+    // ----- Recommended Options -----
+    // allowedTracingUrls: '<BACKEND_URL>',		// Enable distributed tracing
+    // defaultPrivacyLevel: 'mask-user-input',	// 'mask-user-input' | 'allow' | 'mask'
+});
+
+
+# SSH into your bastion or use existing vault exec
+vault kv put secret/datadog/rum \
+  application_id="6bb2a68c-0cac-43cf-a67c-9ebcdaf4ab4d" \
+  client_token="pubde4e0d2a707b33d38c432ed6c5a3419a"
+
+# Verify it was stored correctly
+vault kv get secret/datadog/rum
+
+# Check what the current policy contains
+vault policy read github-actions
+
+# Append the RUM path to the policy
+vault policy write github-actions - <<EOF
+path "secret/data/aws/credentials" {
+  capabilities = ["read"]
+}
+path "secret/data/datadog/rum" {
+  capabilities = ["read"]
+}
+EOF
+
+# Verify policy updated
+vault policy read github-actions
+
+
+==========================================================================================
+                         STORE-ADMIN DATADOG RUM SETUP
+=========================================================================================
+
+import { datadogRum } from '@datadog/browser-rum';
+
+datadogRum.init({
+    applicationId: 'efd0501f-d945-479e-9a7a-d48ac266e250',
+    clientToken: 'pubebbaef4f6fe5d030f6c96f3a6132cca5',
+    site: 'us5.datadoghq.com',
+    service: '<SERVICE_NAME>',
+    env: '<ENV_NAME>',				// e.g. 'prod', 'staging-1', 'dev'
+    version: '<VERSION_NUMBER>',	// e.g. '1.0.0'
+    sessionSampleRate: 100,			// capture 100% of sessions
+    sessionReplaySampleRate: 20,	// capture 20% of sessions with replay
+    trackResources: true,			// Enable Resource tracking
+    trackUserInteractions: true,	// Enable Action tracking
+    trackLongTasks: true,			// Enable Long Tasks tracking
+    
+    // ----- Recommended Options -----
+    // allowedTracingUrls: '<BACKEND_URL>',		// Enable distributed tracing
+    // defaultPrivacyLevel: 'mask-user-input',	// 'mask-user-input' | 'allow' | 'mask'
+});
+
+
+
+
+vault kv put secret/datadog/rum-admin \
+  application_id="efd0501f-d945-479e-9a7a-d48ac266e250" \
+  client_token="pubebbaef4f6fe5d030f6c96f3a6132cca5"
+
+# Verify it was stored correctly
+vault kv get secret/datadog/rum-admin
+
+# Check what the current policy contains
+vault policy read github-actions
+
+# Append the RUM path to the policy
+vault policy write github-actions - <<EOF
+path "secret/data/aws/credentials" {
+  capabilities = ["read"]
+}
+path "secret/data/datadog/rum" {
+  capabilities = ["read"]
+}
+path "secret/data/datadog/rum-admin" {
+  capabilities = ["read"]
+}
+EOF
+
+# Verify policy updated
+vault policy read github-actions
+

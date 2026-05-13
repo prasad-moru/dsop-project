@@ -1,0 +1,62 @@
+export VAULT_ADDR=https://vault.devopsproduction.com
+vault login 
+
+
+
+
+
+
+#!/bin/bash
+# ===================================================================
+# Vault setup for order-service
+# Run these commands on your Vault server or where vault CLI is configured
+# ===================================================================
+
+# 1. Create the secret (aligned to secret/ mount like mongodb and rabbitmq)
+vault kv put secret/order-service \
+  rabbitmq_username="username" \
+  rabbitmq_password="password"
+
+# Verify secret was created
+vault kv get secret/order-service
+
+
+# 2. Create the policy
+vault policy write order-service-policy - <<EOF
+path "secret/data/order-service" {
+  capabilities = ["read"]
+}
+EOF
+
+# Verify policy
+vault policy read order-service-policy
+
+
+# 3. Create the Kubernetes auth role
+# This allows the order-service ServiceAccount in the application namespace
+# to authenticate with Vault and get the secret
+vault write auth/kubernetes/role/order-service \
+  bound_service_account_names=order-service \
+  bound_service_account_namespaces=application \
+  policies=order-service-policy \
+  ttl=1h
+
+# Verify role
+vault read auth/kubernetes/role/order-service
+
+
+# ===================================================================
+# Reference - existing roles for comparison
+# ===================================================================
+# vault write auth/kubernetes/role/mongodb \
+#   bound_service_account_names=mongodb \
+#   bound_service_account_namespaces=platform \
+#   policies=mongodb-policy \
+#   ttl=1h
+#
+# vault write auth/kubernetes/role/rabbitmq \
+#   bound_service_account_names=rabbitmq \
+#   bound_service_account_namespaces=platform \
+#   policies=rabbitmq-policy \
+#   ttl=1h
+# ===================================================================

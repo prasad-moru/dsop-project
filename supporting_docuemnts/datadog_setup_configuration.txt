@@ -1,0 +1,139 @@
+
+prasaddevopsadmin@gmail.com
+Cloud#$@devops
+
+DevSecOps@2026
+
+data account details and configurations. 
+
+kubectl create ns datadog
+
+helm repo add datadog https://helm.datadoghq.com
+helm install datadog-operator datadog/datadog-operator -n datadog
+kubectl create secret generic datadog-secret --from-literal api-key=9b1477a88ded7d82ae1a0ba7f0c5e90b -n datadog
+
+
+
+kind: "DatadogAgent"
+apiVersion: "datadoghq.com/v2alpha1"
+metadata:
+  name: "datadog"
+  namespace: "datadog"
+spec:
+  global:
+    clusterName: "dsop-project"
+    site: "us5.datadoghq.com"
+    credentials:
+      apiSecret:
+        secretName: "datadog-secret"
+        keyName: "api-key"
+    registry: "public.ecr.aws/datadog"
+    tags:
+      - "env:dev"
+  features:
+    clusterChecks:
+      enabled: true
+    orchestratorExplorer:
+      enabled: true
+==================================================================================
+login credentials datadog.
+
+
+https://us5.datadoghq.com/
+
+prasaddevopsadmin@gmail.com
+
+Cloud#$@devops2026
+
+
+=================================================================
+
+API_KEY : 9b1477a88ded7d82ae1a0ba7f0c5e90b
+
+APP_KEY : ddapp_fmO85CazNZu7zUMj4niWuET40C9M3QR6WK
+
+
+
+KEY_ID : 4ce4f38a-be44-416a-9967-23f044796f99
+
+client_token: pubcc8f08f9f9cfecb602f6b6b2252208ec
+
+
+kubectl create secret generic datadog-secret \
+  --from-literal api-key=9b1477a88ded7d82ae1a0ba7f0c5e90b \
+  --from-literal app-key=ddapp_fmO85CazNZu7zUMj4niWuET40C9M3QR6WK \
+  -n datadog \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+
+kubectl create secret generic datadog-secret \
+  --from-literal api-key=9b1477a88ded7d82ae1a0ba7f0c5e90b \
+  --from-literal app-key=ddapp_fmO85CazNZu7zUMj4niWuET40C9M3QR6WK \
+  -n application \
+  --dry-run=client -o yaml | kubectl apply -f -  
+
+
+
+
+kubectl create secret generic datadog-secret \
+  --from-literal=address='https://api.us5.datadoghq.com' \
+  --from-literal=api-key='9b1477a88ded7d82ae1a0ba7f0c5e90b' \
+  --from-literal=app-key='ddapp_fmO85CazNZu7zUMj4niWuET40C9M3QR6WK' \
+  -n datadog
+
+kubectl create secret generic datadog-secret \
+  --from-literal=address='https://api.us5.datadoghq.com' \
+  --from-literal=api-key='9b1477a88ded7d82ae1a0ba7f0c5e90b' \
+  --from-literal=app-key='ddapp_fmO85CazNZu7zUMj4niWuET40C9M3QR6WK' \
+  --namespace application 
+
+
+
+kubectl patch datadogagent datadog -n datadog \
+  --type=merge \
+  -p '{
+    "spec": {
+      "features": {
+        "otlp": {
+          "receiver": {
+            "protocols": {
+              "http": {
+                "enabled": true,
+                "endpoint": "0.0.0.0:4318"
+              }
+            }
+          }
+        }
+      }
+    }
+  }'
+
+
+kubectl patch datadogagent datadog -n datadog \
+  --type=merge \
+  -p '{"spec":{"global":{"tags":["env:production"]}}}'
+
+
+
+import { datadogRum } from '@datadog/browser-rum';
+
+datadogRum.init({
+    applicationId: '6bb2a68c-0cac-43cf-a67c-9ebcdaf4ab4d',
+    clientToken: 'pubde4e0d2a707b33d38c432ed6c5a3419a',
+    site: 'us5.datadoghq.com',
+    service: '<SERVICE_NAME>',
+    env: '<ENV_NAME>',				// e.g. 'prod', 'staging-1', 'dev'
+    version: '<VERSION_NUMBER>',	// e.g. '1.0.0'
+    sessionSampleRate: 100,			// capture 100% of sessions
+    sessionReplaySampleRate: 20,	// capture 20% of sessions with replay
+    trackResources: true,			// Enable Resource tracking
+    trackUserInteractions: true,	// Enable Action tracking
+    trackLongTasks: true,			// Enable Long Tasks tracking
+    
+    // ----- Recommended Options -----
+    // allowedTracingUrls: '<BACKEND_URL>',		// Enable distributed tracing
+    // defaultPrivacyLevel: 'mask-user-input',	// 'mask-user-input' | 'allow' | 'mask'
+});
+
+
+

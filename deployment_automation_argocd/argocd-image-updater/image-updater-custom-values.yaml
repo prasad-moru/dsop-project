@@ -1,0 +1,52 @@
+# image-updater-custom-values.yaml
+
+replicaCount: 1
+
+config:
+  applicationsAPIKind: "argocd"
+  logLevel: "debug"
+
+  argocd:
+    grpcWeb: false
+    # ✅ Correct service name from your kubectl get svc output
+    serverAddress: "argo-cd-argocd-server.argocd.svc.cluster.local:80"
+    insecure: true
+    plaintext: true
+    # ✅ Add your generated token here
+    token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJhZG1pbjphcGlLZXkiLCJuYmYiOjE3Nzc0MDc0ODgsImlhdCI6MTc3NzQwNzQ4OCwianRpIjoiMWQwZGVkOWYtMjM5ZS00MTcxLWFhMjItMjUyN2JhZjI4MTU4In0.ps2KLmGe05_ViMUNY7ql-fUcH8sxVmyltmqwecp4Nfk"
+
+  gitCommitUser: "argocd-image-updater"
+  gitCommitMail: "argocd-image-updater@devopsproduction.com"
+
+  # ✅ ECR Registry - your actual account ID from terraform output
+  registries:
+    - name: ECR
+      api_url: https://357229909289.dkr.ecr.us-east-1.amazonaws.com
+      prefix: 357229909289.dkr.ecr.us-east-1.amazonaws.com
+      ping: yes
+      insecure: no
+      credentials: ext:/scripts/ecr-login.sh
+      credsexpire: 10h
+
+# ✅ Correct IAM Role ARN from your terraform output
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::357229909289:role/Dsop-Project-dev-eks-argocd-image-updater-role"
+
+extraEnv:
+  - name: HOME
+    value: /tmp
+  - name: AWS_REGION
+    value: us-east-1
+  - name: AWS_DEFAULT_REGION
+    value: us-east-1
+
+# ✅ ECR auth script - MUST be enabled
+authScripts:
+  enabled: true
+  scripts:
+    ecr-login.sh: |
+      #!/bin/sh
+      aws ecr get-login-password --region us-east-1 | \
+        awk '{print "AWS:"$0}'

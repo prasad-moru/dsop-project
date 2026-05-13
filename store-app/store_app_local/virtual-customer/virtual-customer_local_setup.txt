@@ -1,0 +1,18 @@
+Prerequisites
+Rust
+Docker
+Docker Compose
+
+
+
+Running the app
+This app relies on the order-service and the rabbitmq instance running. A docker-compose file is provided to make this easy.
+
+To run the necessary services, clone the repo, open a terminal, and navigate to the virtual-customer directory. Then run the following command:
+
+docker compose up
+
+
+export ORDER_SERVICE_URL=http://localhost:3000/
+export ORDERS_PER_HOUR=3600
+cargo run

@@ -1,0 +1,352 @@
+name: Dsop Project Dev Infra
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        type: choice
+        default: 'plan'
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION:      'us-east-1'
+  VAULT_ADDR:      'https://vault.devopsproduction.com'
+  TF_WORKING_DIR:  'dsop_aws_infrastructure/Env/Dev'
+  TF_STATE_BUCKET: 'dsop-project-dev'
+
+# ─────────────────────────────────────────────
+# JOB 1: Validate
+# ─────────────────────────────────────────────
+jobs:
+  validate:
+    name: Validate
+    runs-on: self-hosted
+    environment: dsop-project-dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions
+          jwtGithubAudience: "https://github.com/prasad-moru"
+          exportEnv: true
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init (validation only)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: terraform validate -no-color
+
+# ─────────────────────────────────────────────
+# JOB 2: Security Scan
+# ─────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: self-hosted
+    needs: validate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          soft_fail: true
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          soft_fail: true
+
+# ─────────────────────────────────────────────
+# JOB 3: Plan
+# ─────────────────────────────────────────────
+  plan:
+    name: Plan
+    runs-on: self-hosted
+    needs: [validate, security-scan]
+    environment: dsop-project-dev
+    outputs:
+      exitcode: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions
+          jwtGithubAudience: "https://github.com/prasad-moru"
+          exportEnv: true
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_aws_access_key: ${{ env.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform plan \
+            -var="region=${{ env.AWS_REGION }}" \
+            -detailed-exitcode \
+            -out=tfplan \
+            -no-color 2>&1 | tee plan.txt
+
+          EXITCODE=${PIPESTATUS[0]}
+          echo "exitcode=$EXITCODE" >> $GITHUB_OUTPUT
+
+          if [ $EXITCODE -eq 1 ]; then
+            echo "❌ Plan failed with errors"
+            exit 1
+          elif [ $EXITCODE -eq 2 ]; then
+            echo "✅ Changes detected — plan saved to artifact"
+            exit 0
+          else
+            echo "✅ No changes to apply"
+            exit 0
+          fi
+      - name: Upload Plan Artifact
+        if: steps.plan.outputs.exitcode == '2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.run_number }}
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/plan.txt
+          retention-days: 7
+
+      - name: Plan Summary
+        if: always()
+        run: |
+          echo "### Terraform Plan" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 ${{ env.TF_WORKING_DIR }}/plan.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+# ─────────────────────────────────────────────
+# JOB 4: Apply
+# ─────────────────────────────────────────────
+  apply:
+    name: Apply
+    runs-on: self-hosted
+    needs: plan
+    if: github.event.inputs.action == 'apply' && needs.plan.outputs.exitcode == '2'
+    environment:
+      name: dsop-project-dev
+      url: https://console.aws.amazon.com/eks/home?region=us-east-1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions
+          jwtGithubAudience: "https://github.com/prasad-moru"
+          exportEnv: true
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.run_number }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_aws_access_key: ${{ env.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        id: outputs
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          echo "cluster_name=$(terraform output -raw cluster_name 2>/dev/null || echo 'N/A')" >> $GITHUB_OUTPUT
+          echo "cluster_endpoint=$(terraform output -raw cluster_endpoint 2>/dev/null || echo 'N/A')" >> $GITHUB_OUTPUT
+          echo "vpc_id=$(terraform output -raw vpc_id 2>/dev/null || echo 'N/A')" >> $GITHUB_OUTPUT
+
+      - name: Deployment Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Deployment Complete - Dev Environment
+
+          | Detail | Value |
+          |--------|-------|
+          | Cluster | ${{ steps.outputs.outputs.cluster_name }} |
+          | Endpoint | ${{ steps.outputs.outputs.cluster_endpoint }} |
+          | VPC | ${{ steps.outputs.outputs.vpc_id }} |
+          | Region | ${{ env.AWS_REGION }} |
+          | Deployed by | @${{ github.actor }} |
+          | Commit | ${{ github.sha }} |
+
+          ### AWS Console Links
+          - [EKS Console](https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters/${{ steps.outputs.outputs.cluster_name }})
+          - [VPC Console](https://console.aws.amazon.com/vpc/home?region=${{ env.AWS_REGION }}#vpcs:VpcId=${{ steps.outputs.outputs.vpc_id }})
+          - [ECR Console](https://console.aws.amazon.com/ecr/repositories?region=${{ env.AWS_REGION }})
+          EOF
+
+# ─────────────────────────────────────────────
+# JOB 5: Destroy
+# ─────────────────────────────────────────────
+  destroy:
+    name: Destroy
+    runs-on: self-hosted
+    needs: plan
+    if: github.event.inputs.action == 'destroy'
+    environment:
+      name: dsop-project-dev-destroy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions
+          jwtGithubAudience: "https://github.com/prasad-moru"
+          exportEnv: true
+          secrets: |
+            secret/data/aws/credentials access_key | AWS_ACCESS_KEY_ID ;
+            secret/data/aws/credentials secret_key | AWS_SECRET_ACCESS_KEY
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Destroy
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_aws_access_key: ${{ env.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform destroy \
+            -var="region=${{ env.AWS_REGION }}" \
+            -auto-approve
+
+      - name: Destroy Summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Infrastructure Destroyed - Dev Environment
+          - **Region**: ${{ env.AWS_REGION }}
+          - **Destroyed by**: @${{ github.actor }}
+
+          ### Manual cleanup still needed
+          \`\`\`bash
+          aws s3 rm s3://${{ env.TF_STATE_BUCKET }} --recursive
+          aws s3api delete-bucket --bucket ${{ env.TF_STATE_BUCKET }} --region ${{ env.AWS_REGION }}
+          aws logs delete-log-group --log-group-name /aws/eks/Dsop-project-Dev-eks/cluster --region ${{ env.AWS_REGION }}
+          \`\`\`
+          EOF
+
+# ─────────────────────────────────────────────
+# JOB 6: Notify Success
+# ─────────────────────────────────────────────
+  notify-success:
+    name: Notify Success
+    runs-on: self-hosted
+    needs: apply
+    if: success()
+    steps:
+      - name: Success Notification
+        run: |
+          echo "✅ Deployment to Dev environment completed successfully!"
+          echo "Run: #${{ github.run_number }} | By: ${{ github.actor }}"
+
+# ─────────────────────────────────────────────
+# JOB 7: Notify Failure
+# ─────────────────────────────────────────────
+  notify-failure:
+    name: Notify Failure
+    runs-on: self-hosted
+    needs: apply
+    if: failure()
+    steps:
+      - name: Failure Notification
+        run: |
+          echo "❌ Deployment to Dev environment failed!"
+          echo "Run: #${{ github.run_number }} | By: ${{ github.actor }}"
+          echo "Check logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

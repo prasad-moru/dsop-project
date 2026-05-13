@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mongodb
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/part-of: store-app
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/prasad-moru/dsop-project.git
+    targetRevision: main
+    path: helm-charts/mongodb
+    helm:
+      releaseName: mongodb
+      valueFiles:
+        - values.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      # ServerSideApply removed - causes extra API discovery which triggers
+      # "groupVersion shouldn't be empty" bug on Kubernetes 1.33
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  revisionHistoryLimit: 10

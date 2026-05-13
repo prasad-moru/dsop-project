@@ -1,0 +1,46 @@
+# 1. Add Helm repo (one time)
+helm repo add elastic https://helm.elastic.co
+helm repo update
+
+# 2. Create namespace
+kubectl create namespace logging
+
+# 3. Install in order — ES must be healthy before Logstash starts
+helm install elasticsearch elastic/elasticsearch \
+  --version 8.5.1 -f elasticsearch-values.yaml -n logging 
+
+kubectl get secrets --namespace=logging dsop-elk-master-credentials -ojsonpath='{.data.password}' | base64 -d
+
+7Lx2t7F7pLmW588f
+
+#4 .
+take that password and update logstash-values.yaml:
+yamlpassword => "PASTE_NEW_PASSWORD_HERE"
+
+
+#5
+helm install logstash elastic/logstash \
+  --version 8.5.1 -f logstash-values.yaml -n logging 
+
+
+#6
+helm install kibana elastic/kibana \
+  --version 8.5.1 -f kibana-values.yaml -n logging 
+
+  $ kubectl get secrets --namespace=logging dsop-elk-master-credentials -ojsonpath='{.data.password}' | base64 -d
+3. Retrieve the kibana service account token.
+  $ kubectl get secrets --namespace=logging kibana-kibana-es-token -ojsonpath='{.data.token}' | base64 -d
+
+#6
+
+kubectl get secret dsop-elk-master-credentials -n logging -o yaml \
+  | sed 's/name: dsop-elk-master-credentials/name: elasticsearch-master-credentials/' \
+  | kubectl apply -f -
+
+helm install filebeat elastic/filebeat \
+  --version 8.5.1 -f filebeat-values.yaml -n logging 
+
+# 4. Verify all pods running
+kubectl get pods -n logging -w
+
+

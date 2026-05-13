@@ -1,0 +1,44 @@
+# MongoDB credentials
+vault kv put secret/mongodb \
+  username="admin" \
+  password="StrongPass123"
+
+# RabbitMQ credentials
+vault kv put secret/rabbitmq \
+  username="username" \
+  password="password"
+
+# Verify
+vault kv get secret/mongodb
+vault kv get secret/rabbitmq
+
+
+
+
+# MongoDB policy
+vault policy write mongodb-policy - <<EOF
+path "secret/data/mongodb" {
+  capabilities = ["read"]
+}
+EOF
+
+# RabbitMQ policy
+vault policy write rabbitmq-policy - <<EOF
+path "secret/data/rabbitmq" {
+  capabilities = ["read"]
+}
+EOF
+
+# MongoDB role
+vault write auth/kubernetes/role/mongodb \
+  bound_service_account_names=mongodb \
+  bound_service_account_namespaces=platform \
+  policies=mongodb-policy \
+  ttl=1h
+
+# RabbitMQ role
+vault write auth/kubernetes/role/rabbitmq \
+  bound_service_account_names=rabbitmq \
+  bound_service_account_namespaces=platform \
+  policies=rabbitmq-policy \
+  ttl=1h

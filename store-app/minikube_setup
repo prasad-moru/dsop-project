@@ -1,0 +1,10 @@
+minikube start \
+  --driver=docker \
+  --cpus=12 \
+  --memory=20480 \
+  --disk-size=80g \
+  --kubernetes-version=stable \
+  --nodes=2 \
+  --embed-certs \
+  --addons=ingress,metrics-server,dashboard,registry \
+  --profile=maxconfig

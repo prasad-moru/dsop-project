@@ -1,0 +1,66 @@
+product-service
+This is a Rust app that simulates a product catalog. It is meant to be used in conjunction with the store-front and store-admin apps.
+
+This app is a simple REST API that allows you to get a list of products, get a single product, update a product, and add a product.
+
+Products are loaded into memory and not persisted. So if the app is restarted, the products will be reloaded.
+
+Running the app locally
+The app does not rely on any other services, so you can run it locally without any other services running.
+
+Prerequisites
+Rust
+Running the app
+
+===============================================================
+installation Prerequisites. 
+
+https://rust-lang.org/tools/install/
+
+sudo apt-get install -y pkg-config libssl-dev
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+rustc --version
+cargo --version
+
+=================================================================
+
+
+docker & docker-compose is alreay installed.
+
+To run the app, clone the repo, open a terminal, and navigate to the product-service directory.
+
+If you are testing the proxy for ai-service, you will need to run the ai-service container then set the AI_SERVICE_URL environment variable to the URL of the ai-service.
+
+export AI_SERVICE_URL=http://localhost:5001/
+
+docker compose up
+this docker-compose file is running the ai-service which contains the OPENAI API KEY Text to image generating. 
+
+
+Then run the following command:
+
+cargo run
+When the app is running, you should see output similar to the following:
+
+    Finished dev [unoptimized + debuginfo] target(s) in 0.16s
+     Running `target/debug/product-service`
+Listening on http://0.0.0.0:3002
+[2023-06-28T02:44:47Z INFO  actix_server::builder] starting 16 workers
+[2023-06-28T02:44:47Z INFO  actix_server::server] Actix runtime found; starting in Actix runtime
+Using the test-product-service.http file in the root of the repo, you can test the API. However, you will need to use VS Code and have the REST Client extension installed.
+
+============================================================================================
+
+This product service is depending on the ai service. first ai-service should run before product service. 
+
+product service should run locally with
+
+cargo run command. product service is connecting to the ai-service for images 
+
+using posaman tool accessing this 
+
+for testing inforamtion is saved in this file. follow this  test-product-service.http
+
+

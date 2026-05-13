@@ -1,0 +1,78 @@
+Outputs:
+
+alb_ingress_role_arn = "arn:aws:iam::357229909289:role/Dsop-project-Dev-eks-aws-lb-controller"
+argocd_image_updater_policy_arn = "arn:aws:iam::357229909289:policy/Dsop-project-Dev-eks-argocd-image-updater-ecr-policy"
+argocd_image_updater_role_arn = "arn:aws:iam::357229909289:role/Dsop-project-Dev-eks-argocd-image-updater-role"
+argocd_image_updater_role_name = "Dsop-project-Dev-eks-argocd-image-updater-role"
+argocd_image_updater_service_account_annotation = "eks.amazonaws.com/role-arn=arn:aws:iam::357229909289:role/Dsop-project-Dev-eks-argocd-image-updater-role"
+cluster_certificate_authority_data = <sensitive>
+cluster_endpoint = "https://4247221DB5B7BCBBE978E31CF8BC87B6.gr7.us-east-1.eks.amazonaws.com"
+cluster_name = "Dsop-project-Dev-eks"
+cluster_role_arn = "arn:aws:iam::357229909289:role/Dsop-project-Dev-eks-role"
+configure_kubectl = "aws eks update-kubeconfig --name Dsop-project-Dev-eks --region us-east-1"
+ebs_csi_role_arn = "arn:aws:iam::357229909289:role/Dsop-project-Dev-eks-ebs-csi-driver"
+ecr_registry_id = "357229909289"
+ecr_repository_arns = {
+  "ai-service" = "arn:aws:ecr:us-east-1:357229909289:repository/ai-service"
+  "makeline-service" = "arn:aws:ecr:us-east-1:357229909289:repository/makeline-service"
+  "order-service" = "arn:aws:ecr:us-east-1:357229909289:repository/order-service"
+  "product-service" = "arn:aws:ecr:us-east-1:357229909289:repository/product-service"
+  "store-admin" = "arn:aws:ecr:us-east-1:357229909289:repository/store-admin"
+  "store-front" = "arn:aws:ecr:us-east-1:357229909289:repository/store-front"
+  "store-virtual-customer" = "arn:aws:ecr:us-east-1:357229909289:repository/store-virtual-customer"
+  "store-virtual-worker" = "arn:aws:ecr:us-east-1:357229909289:repository/store-virtual-worker"
+}
+ecr_repository_names = [
+  "ai-service",
+  "makeline-service",
+  "order-service",
+  "product-service",
+  "store-admin",
+  "store-front",
+  "store-virtual-customer",
+  "store-virtual-worker",
+]
+ecr_repository_urls = {
+  "ai-service" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/ai-service"
+  "makeline-service" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/makeline-service"
+  "order-service" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/order-service"
+  "product-service" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/product-service"
+  "store-admin" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/store-admin"
+  "store-front" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/store-front"
+  "store-virtual-customer" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/store-virtual-customer"
+  "store-virtual-worker" = "357229909289.dkr.ecr.us-east-1.amazonaws.com/store-virtual-worker"
+}
+helm_values_snippet = <<EOT
+# Add this to your ArgoCD Image Updater Helm values:
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn=arn:aws:iam::357229909289:role/Dsop-project-Dev-eks-argocd-image-updater-role
+
+config:
+  registries:
+    - name: ECR
+      api_url: https://357229909289.dkr.ecr.us-east-1.amazonaws.com
+      prefix: 357229909289.dkr.ecr.us-east-1.amazonaws.com
+      ping: yes
+      insecure: no
+      credentials: ext:/scripts/ecr-login.sh
+      credsexpire: 10h
+
+EOT
+node_group_arn = "arn:aws:eks:us-east-1:357229909289:nodegroup/Dsop-project-Dev-eks/Dsop-project-Dev-nodes/96cecdf5-1631-ac81-4884-de33c6920c67"
+node_group_name = "Dsop-project-Dev-nodes"
+node_role_arn = "arn:aws:iam::357229909289:role/Dsop-project-Dev-nodes-role"
+node_security_group_id = "sg-0dcb9db087d791e9a"
+oidc_provider_arn = "arn:aws:iam::357229909289:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/4247221DB5B7BCBBE978E31CF8BC87B6"
+oidc_provider_url = "oidc.eks.us-east-1.amazonaws.com/id/4247221DB5B7BCBBE978E31CF8BC87B6"
+private_subnet_ids = [
+  "subnet-00a64d11313fbfbe8",
+  "subnet-0d89326b42a32aaee",
+]
+public_subnet_ids = [
+  "subnet-0b36fa88a1d694d6e",
+  "subnet-085bcf3cd8c53c3f2",
+]
+vpc_cidr = "10.0.0.0/16"
+vpc_id = "vpc-0303dbe9acf5d1e11"

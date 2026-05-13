@@ -1,0 +1,525 @@
+SONARQUBE + HASHICORP VAULT + POSTGRESQL + GITHUB ACTIONS RUNNER SETUP
+Ubuntu Server Setup Guide
+=======================================================================
+
+
+=======================================================================
+SECTION 1 - SYSTEM PREREQUISITES
+=======================================================================
+
+Update the system and install required packages.
+
+    sudo apt update && sudo apt upgrade -y
+    sudo apt install -y wget curl gnupg2 software-properties-common apt-transport-https ca-certificates unzip openjdk-17-jdk
+
+
+=======================================================================
+SECTION 2 - POSTGRESQL INSTALLATION
+=======================================================================
+
+Install PostgreSQL and enable it to start on boot.
+
+    sudo apt install -y postgresql postgresql-contrib
+    sudo systemctl start postgresql
+    sudo systemctl enable postgresql
+    sudo systemctl status postgresql
+
+
+Login to PostgreSQL as the postgres admin user.
+
+    sudo -i -u postgres psql
+
+
+Run these SQL commands inside the PostgreSQL prompt to create databases and users for SonarQube and Vault.
+
+    CREATE USER sonarqube WITH PASSWORD 'SonarPass@123';
+    CREATE DATABASE sonarqubedb OWNER sonarqube;
+    GRANT ALL PRIVILEGES ON DATABASE sonarqubedb TO sonarqube;
+
+    CREATE USER vaultuser WITH PASSWORD 'VaultPass@123';
+    CREATE DATABASE vaultdb OWNER vaultuser;
+    GRANT ALL PRIVILEGES ON DATABASE vaultdb TO vaultuser;
+
+    \q
+
+
+Open the PostgreSQL config file to tune performance settings.
+
+    sudo nano /etc/postgresql/*/main/postgresql.conf
+
+
+Add or update these lines inside the config file.
+
+    max_connections = 200
+    shared_buffers = 256MB
+    effective_cache_size = 1GB
+    work_mem = 4MB
+
+
+Restart PostgreSQL to apply the changes.
+
+    sudo systemctl restart postgresql
+
+
+=======================================================================
+SECTION 3 - SONARQUBE INSTALLATION
+=======================================================================
+
+SonarQube requires specific kernel and file limit settings. Open the sysctl config file.
+
+    sudo nano /etc/sysctl.conf
+
+
+Add these two lines at the end of the file.
+
+    vm.max_map_count=524288
+    fs.file-max=131072
+
+
+Apply the kernel settings without rebooting.
+
+    sudo sysctl -p
+
+
+Open the limits config file to set file and process limits.
+
+    sudo nano /etc/security/limits.conf
+
+
+Add these lines at the end of the file.
+
+    sonarqube   -   nofile   131072
+    sonarqube   -   nproc    8192
+
+
+Create a dedicated system user for SonarQube.
+
+    sudo useradd -r -m -U -d /opt/sonarqube -s /bin/bash sonarqube
+
+
+Download and extract SonarQube. Check https://www.sonarsource.com for the latest version.
+
+    cd /tmp
+    wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-10.4.1.88267.zip
+    sudo unzip sonarqube-10.4.1.88267.zip -d /opt/
+    sudo mv /opt/sonarqube-10.4.1.88267 /opt/sonarqube
+    sudo chown -R sonarqube:sonarqube /opt/sonarqube
+
+
+Open the SonarQube properties file to configure database connection and ports.
+
+    sudo nano /opt/sonarqube/conf/sonar.properties
+
+
+Add these lines inside the properties file.
+
+    sonar.jdbc.username=sonarqube
+    sonar.jdbc.password=SonarPass@123
+    sonar.jdbc.url=jdbc:postgresql://localhost:5432/sonarqubedb
+    sonar.web.host=0.0.0.0
+    sonar.web.port=9000
+    sonar.web.javaAdditionalOpts=-server
+    sonar.search.javaOpts=-Xmx512m -Xms512m -XX:MaxDirectMemorySize=256m -XX:+HeapDumpOnOutOfMemoryError
+    sonar.log.level=INFO
+    sonar.path.logs=logs
+
+
+Create a systemd service file for SonarQube so it runs automatically on boot.
+
+    sudo nano /etc/systemd/system/sonarqube.service
+
+
+Paste this content into the service file.
+
+    [Unit]
+    Description=SonarQube Service
+    After=network.target postgresql.service
+
+    [Service]
+    Type=forking
+    ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
+    ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
+    User=sonarqube
+    Group=sonarqube
+    Restart=always
+    LimitNOFILE=131072
+    LimitNPROC=8192
+
+    [Install]
+    WantedBy=multi-user.target
+
+
+Reload systemd and start SonarQube.
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable sonarqube
+    sudo systemctl start sonarqube
+
+
+Watch the SonarQube startup logs. It takes about 2 minutes to fully start.
+
+    sudo tail -f /opt/sonarqube/logs/sonar.log
+
+
+=======================================================================
+SECTION 4 - HASHICORP VAULT INSTALLATION
+=======================================================================
+
+Reference : https://developer.hashicorp.com/vault/install
+
+Add the HashiCorp GPG key and repository, then install Vault.
+
+    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+    sudo apt update && sudo apt install -y vault
+
+
+Create a dedicated user and directories for Vault.
+
+    sudo useradd -r -m -U -d /opt/vault -s /bin/false vault
+    sudo mkdir -p /opt/vault/{data,logs,config}
+    sudo chown -R vault:vault /opt/vault
+
+
+Create the Vault configuration file.
+
+    sudo nano /opt/vault/config/vault.hcl
+
+
+Paste this content into the config file.
+
+    storage "postgresql" {
+      connection_url = "postgres://vaultuser:VaultPass@123@localhost:5432/vaultdb?sslmode=disable"
+      table          = "vault_kv_store"
+      ha_enabled     = "false"
+    }
+
+    listener "tcp" {
+      address       = "0.0.0.0:8200"
+      tls_disable   = "true"
+    }
+
+    api_addr     = "http://127.0.0.1:8200"
+    cluster_addr = "http://127.0.0.1:8201"
+    ui = true
+    log_level = "info"
+    log_file  = "/opt/vault/logs/vault.log"
+
+
+Login to PostgreSQL and create the table that Vault will use to store data.
+
+    sudo -i -u postgres psql -d vaultdb
+
+
+Run these SQL commands inside the PostgreSQL prompt.
+
+    CREATE TABLE vault_kv_store (
+      parent_path TEXT COLLATE "C" NOT NULL,
+      path        TEXT COLLATE "C",
+      key         TEXT COLLATE "C",
+      value       BYTEA,
+      CONSTRAINT pkey PRIMARY KEY (path, key)
+    );
+
+    CREATE INDEX parent_path_idx ON vault_kv_store (parent_path);
+    GRANT ALL PRIVILEGES ON TABLE vault_kv_store TO vaultuser;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO vaultuser;
+
+    \q
+
+
+Create a systemd service file for Vault.
+
+    sudo nano /etc/systemd/system/vault.service
+
+
+Paste this content into the service file.
+
+    [Unit]
+    Description=HashiCorp Vault
+    After=network.target postgresql.service
+
+    [Service]
+    User=vault
+    Group=vault
+    ExecStart=/usr/bin/vault server -config=/opt/vault/config/vault.hcl
+    ExecReload=/bin/kill --signal HUP $MAINPID
+    KillMode=process
+    KillSignal=SIGINT
+    Restart=on-failure
+    RestartSec=5
+    LimitNOFILE=65536
+    LimitMEMLOCK=infinity
+    AmbientCapabilities=CAP_IPC_LOCK
+
+    [Install]
+    WantedBy=multi-user.target
+
+
+Reload systemd and start Vault.
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable vault
+    sudo systemctl start vault
+    sudo systemctl status vault
+
+
+=======================================================================
+SECTION 5 - INITIALIZE AND UNSEAL VAULT
+=======================================================================
+
+Set the Vault address as an environment variable.
+
+    export VAULT_ADDR='http://127.0.0.1:8200'
+
+
+Initialize Vault. This generates 5 unseal keys and 1 root token.
+IMPORTANT - Save all 5 unseal keys and the root token in a safe place. You cannot recover them later.
+
+    vault operator init
+
+
+Unseal Vault using any 3 of the 5 keys generated above. Run this command 3 times with 3 different keys.
+
+    vault operator unseal <paste-unseal-key-here>
+    vault operator unseal <paste-unseal-key-here>
+    vault operator unseal <paste-unseal-key-here>
+
+
+Login to Vault using the root token.
+
+    vault login <paste-root-token-here>
+
+
+Check that Vault is running and unsealed.
+
+    vault status
+
+
+=======================================================================
+SECTION 6 - CONFIGURE FIREWALL
+=======================================================================
+
+Allow necessary ports through the firewall.
+
+    sudo ufw allow 22/tcp
+    sudo ufw allow 9000/tcp
+    sudo ufw allow 8200/tcp
+    sudo ufw enable
+    sudo ufw status
+
+
+=======================================================================
+SECTION 7 - GITHUB ACTIONS RUNNER INSTALLATION
+=======================================================================
+
+Install required packages for the runner.
+
+    sudo apt install -y curl wget git tar libicu-dev
+
+
+Create a dedicated user for the GitHub Actions runner. Never run the runner as root.
+
+    sudo useradd -m -s /bin/bash githubrunner
+    sudo usermod -aG sudo githubrunner
+    sudo passwd githubrunner
+
+
+Switch to the runner user.
+
+    sudo su - githubrunner
+
+
+Create a directory for the runner.
+
+    mkdir -p /home/githubrunner/actions-runner
+    cd /home/githubrunner/actions-runner
+
+
+Download the latest runner package. Check https://github.com/actions/runner/releases for the latest version.
+
+    curl -o actions-runner-linux-x64-2.316.1.tar.gz -L https://github.com/actions/runner/releases/download/v2.316.1/actions-runner-linux-x64-2.316.1.tar.gz
+
+
+Verify the downloaded file checksum for security.
+
+    echo "d62de7a4dda3bc7a89a15e1a02a4f52c6816f96cbb72ca28e7d5a6e5a4bf65a1  actions-runner-linux-x64-2.316.1.tar.gz" | sha256sum -c
+
+
+Extract the runner package.
+
+    tar xzf ./actions-runner-linux-x64-2.316.1.tar.gz
+
+
+Get a registration token from GitHub.
+For repository runner - Go to: GitHub Repo > Settings > Actions > Runners > New self-hosted runner
+For organization runner - Go to: GitHub Org > Settings > Actions > Runners > New self-hosted runner
+Copy the token shown on that page. It expires in 1 hour.
+
+
+Register the runner with your GitHub repository. Replace the URL and token with your own values.
+
+    ./config.sh \
+      --url https://github.com/YOUR_ORG/YOUR_REPO \
+      --token YOUR_REGISTRATION_TOKEN \
+      --name "ubuntu-self-hosted" \
+      --labels "self-hosted,linux,x64" \
+      --work "_work" \
+      --unattended
+
+
+=======================================================================
+SECTION 8 - RUN GITHUB ACTIONS RUNNER AS SYSTEMD SERVICE
+=======================================================================
+
+After configuring the runner, do not use ./run.sh because it stops when the terminal closes.
+Instead install it as a systemd service so it runs permanently and starts on every reboot.
+
+Go back to a sudo user first.
+
+    exit
+
+
+Install the runner as a systemd service from the actions-runner directory.
+
+    cd /home/githubrunner/actions-runner
+    sudo ./svc.sh install
+
+
+Start the runner service.
+
+    sudo ./svc.sh start
+
+
+Check if the runner service is running.
+
+    sudo ./svc.sh status
+
+
+Enable the service to start automatically when the server reboots.
+
+    sudo systemctl enable actions.runner.*
+
+
+Check live logs of the runner service.
+
+    journalctl -u "actions.runner.*" -f
+
+
+Other useful service management commands.
+
+    sudo ./svc.sh stop
+    sudo ./svc.sh stop && sudo ./svc.sh start
+    sudo systemctl status actions.runner.*
+
+
+=======================================================================
+SECTION 9 - INSTALL COMMON BUILD TOOLS FOR CI/CD PIPELINES
+=======================================================================
+
+Install Docker and other common tools that pipelines often need.
+
+    sudo apt install -y build-essential docker.io docker-compose nodejs npm python3 python3-pip maven gradle
+
+
+Add the runner user to the docker group so pipelines can run Docker commands.
+
+    sudo usermod -aG docker githubrunner
+
+
+Start Docker and enable it on boot.
+
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    docker --version
+
+
+=======================================================================
+SECTION 10 - VERIFY ALL SERVICES ARE RUNNING
+=======================================================================
+
+Check PostgreSQL status.
+
+    sudo systemctl status postgresql
+
+
+Check SonarQube status. Wait about 2 minutes after start for it to be fully ready.
+
+    curl -I http://localhost:9000
+
+
+Check Vault status.
+
+    export VAULT_ADDR='http://127.0.0.1:8200'
+    vault status
+
+
+Check GitHub Actions runner status.
+
+    sudo systemctl status actions.runner.*
+
+
+=======================================================================
+SECTION 11 - SERVICE ACCESS DETAILS
+=======================================================================
+
+SonarQube Web UI
+    URL      - http://YOUR_SERVER_IP:9000
+    Username - admin
+    Password - admin (change this immediately after first login)
+
+HashiCorp Vault Web UI
+    URL   - http://YOUR_SERVER_IP:8200/ui
+    Login - use the root token generated during vault operator init
+
+PostgreSQL
+    Port     - 5432
+    SonarQube DB  - sonarqubedb / user: sonarqube / password: SonarPass@123
+    Vault DB      - vaultdb / user: vaultuser / password: VaultPass@123
+
+GitHub Actions Runner
+    Check status at - GitHub Repo > Settings > Actions > Runners
+    Runner should show as Idle with a green dot when working correctly
+
+
+=======================================================================
+SECTION 12 - TROUBLESHOOTING
+=======================================================================
+
+Runner shows offline on GitHub
+    sudo systemctl restart actions.runner.*
+
+Permission denied when running Docker in pipeline
+    sudo usermod -aG docker githubrunner
+    newgrp docker
+
+GitHub token expired during runner config
+    Generate a new token from GitHub. Tokens are valid for 1 hour only.
+
+Vault is sealed after server reboot
+    export VAULT_ADDR='http://127.0.0.1:8200'
+    vault operator unseal <key1>
+    vault operator unseal <key2>
+    vault operator unseal <key3>
+
+SonarQube not starting
+    sudo tail -f /opt/sonarqube/logs/sonar.log
+    sudo tail -f /opt/sonarqube/logs/es.log
+
+Check all services at once
+    sudo systemctl status postgresql sonarqube vault actions.runner.*
+
+Clean up old build artifacts to free disk space
+    find /home/githubrunner/actions-runner/_work -mtime +7 -type f -delete
+
+
+=======================================================================
+END OF FILE
+=======================================================================
+
+
+
+python3 installation into githubactions runner server .
+
+
+sudo apt install python3-pip

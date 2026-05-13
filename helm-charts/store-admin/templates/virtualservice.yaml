@@ -1,0 +1,21 @@
+{{- if and .Values.istio.enabled .Values.istio.virtualService.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "store-admin.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "store-admin.labels" . | nindent 4 }}
+spec:
+  hosts:
+    - {{ include "store-admin.fullname" . }}
+    - {{ include "store-admin.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  http:
+  - name: primary
+    route:
+    - destination:
+        host: {{ include "store-admin.fullname" . }}
+        port:
+          number: {{ .Values.service.port }}
+      weight: 100
+{{- end }}

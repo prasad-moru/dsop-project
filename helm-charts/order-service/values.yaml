@@ -1,0 +1,244 @@
+# helm-charts/order-service/values.yaml
+replicaCount: 1
+
+image:
+  repository: 357229909289.dkr.ecr.us-east-1.amazonaws.com/dsop/order-service
+  tag: "1.0.3-a82b978"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "order-service"
+
+service:
+  name: order-service
+  type: ClusterIP
+  port: 3000
+  targetPort: 3000
+
+# Argo Rollouts Strategy
+strategy:
+  type: canary
+  canary:
+    dynamicStableScale: true       
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 30s           
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      - setWeight: 40
+      - pause:
+          duration: 30s             
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      - setWeight: 60
+      - pause:
+          duration: 30s            
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      - setWeight: 80
+      - pause:
+          duration: 30s            
+      - analysis:
+          templates:
+            - templateName: order-service-analysis
+      - setWeight: 100
+    trafficRouting:
+      istio:
+        virtualService:
+          name: order-service
+          routes:
+            - primary
+    analysisInterval: 1m
+    analysisSuccessCount: 5
+    analysisFailureLimit: 3
+
+podAnnotations:
+  traffic.sidecar.istio.io/excludeOutboundPorts: "8200,8201,443"
+  proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+
+# Istio Configuration
+istio:
+  enabled: true
+  gateway:
+    enabled: false
+  virtualService:
+    enabled: true
+    hosts:
+      - order-service
+    timeout: "120s"  
+  destinationRule:
+    enabled: true
+
+# HPA Configuration
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 3
+          periodSeconds: 15
+      selectPolicy: Max
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Probes
+probes:
+  startup:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 20
+    failureThreshold: 5
+    periodSeconds: 10
+  readiness:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 3
+    failureThreshold: 3
+    periodSeconds: 5
+  liveness:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 3
+    failureThreshold: 5
+    periodSeconds: 3
+
+# Environment variables
+env:
+  - name: ORDER_QUEUE_HOSTNAME
+    value: "rabbitmq.platform.svc.cluster.local"
+  - name: ORDER_QUEUE_PORT
+    value: "5672"
+  - name: ORDER_QUEUE_NAME
+    value: "orders"
+  - name: FASTIFY_ADDRESS
+    value: "0.0.0.0"
+  - name: DD_TRACE_ENABLED
+    value: "true"
+  - name: DD_RUNTIME_METRICS_ENABLED
+    value: "true"
+  - name: DD_TRACE_AMQP_ENABLED
+    value: "false"
+  - name: DD_TRACE_RHEA_ENABLED    # ← THIS is the correct fix
+    value: "false"
+
+# Init Container - wait for RabbitMQ in platform namespace
+initContainers:
+  - name: wait-for-rabbitmq
+    image: busybox:1.36
+    command:
+      - 'sh'
+      - '-c'
+      - 'until nc -zv rabbitmq.platform.svc.cluster.local 5672; do echo waiting for rabbitmq; sleep 2; done;'
+    resources:
+      requests:
+        cpu: 1m
+        memory: 50Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+# Vault Configuration
+vault:
+  enabled: true
+  address: "https://vault.devopsproduction.com"
+  role: "order-service"
+  secrets:
+    rabbitmq:
+      path: "secret/data/order-service"
+      template: |
+        {{- with secret "secret/data/order-service" -}}
+        export ORDER_QUEUE_USERNAME="{{ .Data.data.rabbitmq_username }}"
+        export ORDER_QUEUE_PASSWORD="{{ .Data.data.rabbitmq_password }}"
+        {{- end }}
+
+# Datadog Configuration
+datadog:
+  enabled: true
+
+  env: production
+  service: order-service
+
+  logs:
+    enabled: true
+  apm:
+    enabled: true                  # enabled for nodejs tracing
+    language: nodejs
+  profiling:
+    enabled: false
+
+# Prometheus Metrics
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    path: /metrics
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podLabels: {}
+
+# Analysis Template Configuration
+analysis:
+  enabled: true
+  provider: datadog
+  datadog:
+    secretName: datadog-secret
+    metrics:
+      - name: error-rate
+        query: "avg:trace.http.request.errors{service:order-service,env:production}.as_rate()"
+        successCondition: "default(result, 0) < 0.05"
+        failureLimit: 1             
+        consecutiveErrorLimit: 5    
+        interval: 10s             
+        count: 3                   
+      - name: p95-latency
+        query: "avg:trace.http.request.duration.by.service.95p{service:order-service,env:production}"
+        successCondition: "default(result, 0) < 1000"
+        failureLimit: 1             
+        consecutiveErrorLimit: 5    
+        interval: 10s             
+        count: 3                  

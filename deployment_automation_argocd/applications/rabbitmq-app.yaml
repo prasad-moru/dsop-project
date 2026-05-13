@@ -1,0 +1,43 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rabbitmq
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: rabbitmq
+    app.kubernetes.io/part-of: store-app
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/prasad-moru/dsop-project.git
+    targetRevision: main
+    path: helm-charts/rabbitmq
+    helm:
+      releaseName: rabbitmq
+      valueFiles:
+        - values.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  revisionHistoryLimit: 10

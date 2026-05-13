@@ -1,0 +1,41 @@
+ubuntu@ip-172-31-29-95:~$ vault operator init
+Unseal Key 1: aYchD4M115+ZSDxi+7Zi4OopivNn47Ha5tHxHSC0hmwr
+Unseal Key 2: yqCyc1xuH2O3pzVTTi+5XmDtmUWh2cZj2LsCZfvR/HRC
+Unseal Key 3: zSSkTgbUZtarMhVHPpqYwG8NeTHN/TNIE9gDIF9pfmhW
+Unseal Key 4: r3+E5n2VCTlm6qwnYDyWuWLkN+a4W6w1fhC/TzsPvGeu
+Unseal Key 5: MjaBYJSkBV0OMjHJRkFlq+WidMtfKF772UbxLXuqu5Mh
+
+Initial Root Token: hvs.dqsgnqNi7GNx24UKXzpX0zy0
+
+
+
+
+sonqarqube server login http:ip:9000
+
+admin
+Dsop$project
+
+
+vault server health check : /v1/sys/health
+
+# Authentication
+
+
+√ Connected to GitHub
+
+# Runner Registration
+
+Enter the name of the runner group to add this runner to: [press Enter for Default]
+
+Enter the name of runner: [press Enter for ip-172-31-29-95] dsop-host
+
+This runner will have the following labels: 'self-hosted', 'Linux', 'X64'
+Enter any additional labels (ex. label-1,label-2): [press Enter to skip] dsop-runner
+
+√ Runner successfully added
+
+# Runner settings
+
+Enter name of work folder: [press Enter for _work]
+
+√ Settings Saved.

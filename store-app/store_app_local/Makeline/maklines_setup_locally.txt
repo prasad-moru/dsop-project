@@ -1,0 +1,164 @@
+Prerequisites
+Go   =========== https://go.dev/doc/install
+Docker   =======   https://docs.docker.com/desktop/setup/install/linux/ubuntu/
+Docker Compose   ==== https://docs.docker.com/desktop/setup/install/linux/ubuntu/
+MongoSH =======  https://www.mongodb.com/docs/mongodb-shell/install/
+
+
+Option 1: RabbitMQ
+To run this against RabbitMQ. A docker-compose file is provided to make this easy. This will run RabbitMQ, the RabbitMQ Management UI, and enable the rabbitmq_amqp1_0 plugin. The plugin is necessary to connect to RabbitMQ using AMQP 1.0.
+
+With the services running, open a new terminal and navigate to the makeline-service directory.
+
+Set the connection information for the RabbitMQ queue by running the following commands to set the environment variables:
+
+export ORDER_QUEUE_URI=amqp://localhost
+export ORDER_QUEUE_USERNAME=username
+export ORDER_QUEUE_PASSWORD=password
+export ORDER_QUEUE_NAME=orders
+
+
+
+Option 1: MongoDB
+If you are using a local MongoDB container, run the following commands:
+
+export ORDER_DB_URI=mongodb://localhost:27017
+export ORDER_DB_NAME=orderdb
+export ORDER_DB_COLLECTION_NAME=orders
+
+
+Running the app locally
+The app relies on RabbitMQ and MongoDB. Additionally, to simulate orders, you will need to run the order-service with the virtual-customer app. A docker-compose file is provided to make this easy.
+
+To run the necessary services, clone the repo, open a terminal, and navigate to the makeline-service directory. Then run the following command:
+
+
+===================================================================================================================
+
+required clear understanding of the compose file 
+
+version: "3.7"
+services:
+  mongodb:
+    image: mongo:6.0.6
+    container_name: mongo
+    restart: always
+    ports:
+      - 27017:27017
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand('ping').ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - backend_services
+  rabbitmq:
+    image: rabbitmq:3.11.17-management-alpine
+    container_name: rabbitmq
+    restart: always
+    environment:
+      - "RABBITMQ_DEFAULT_USER=username"
+      - "RABBITMQ_DEFAULT_PASS=password"
+    ports:
+      - 15672:15672
+      - 5672:5672
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - ../../rabbitmq_enabled_plugins:/etc/rabbitmq/enabled_plugins
+    networks:
+      - backend_services
+  order-service:
+    build: ../order-service
+    container_name: order-service
+    restart: always
+    ports:
+      - 3000:3000
+    healthcheck:
+      test: ["CMD", "wget", "-O", "/dev/null", "-q", "http://order-service:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    environment:
+      - ORDER_QUEUE_HOSTNAME=rabbitmq
+      - ORDER_QUEUE_PORT=5672
+      - ORDER_QUEUE_USERNAME=username
+      - ORDER_QUEUE_PASSWORD=password
+      - ORDER_QUEUE_NAME=orders
+      - ORDER_QUEUE_RECONNECT_LIMIT=3
+    networks:
+      - backend_services
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+  virtual-customer:
+    build: ../virtual-customer
+    container_name: virtual-customer
+    restart: always
+    environment:
+      - ORDER_SERVICE_URL=http://order-service:3000/
+      - ORDERS_PER_HOUR=60
+    networks:
+      - backend_services
+    depends_on:
+      order-service:
+        condition: service_healthy
+networks:
+  backend_services:
+    driver: bridge
+
+docker compose up -d
+
+docker compose file contians the configurations. of rabbitmq services, order service, mongodb services for local setup.
+
+===============================================================================================================
+
+
+Now you can run the following commands to start the application:
+
+go get .
+go run .
+When the app is running, you should see output similar to the following:
+
+[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:   export GIN_MODE=release
+ - using code:  gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /order/fetch              --> main.fetchOrders (4 handlers)
+[GIN-debug] GET    /order/:id                --> main.getOrder (4 handlers)
+[GIN-debug] PUT    /order                    --> main.updateOrder (4 handlers)
+[GIN-debug] GET    /health                   --> main.main.func1 (4 handlers)
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :3001
+
+
+
+access localhost:3001/order/fetch from browser 
+
+Using the test-makeline-service.http file in the root of the repo, you can test the API. However, you will need to use VS Code and have the REST Client extension installed.
+
+To view the orders in MongoDB, open a terminal and run the following command:
+
+# connect to mongodb
+mongosh
+
+# show databases and confirm orderdb exists
+show dbs
+
+# use orderdb
+use orderdb
+
+# show collections and confirm orders exists
+show collections
+
+# get the orders
+db.orders.find()
+
+# get completed orders
+db.orders.findOne({status: 1})

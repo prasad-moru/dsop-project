@@ -1,0 +1,89 @@
+replicaCount: 1
+
+image:
+  repository: prasad890/dsop-rabbitmq
+  tag: "3.11.17"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "rabbitmq"
+
+service:
+  name: rabbitmq
+  type: ClusterIP
+  ports:
+    amqp:
+      port: 5672
+      targetPort: 5672
+    management:
+      port: 15672
+      targetPort: 15672
+    prometheus:
+      port: 15692
+      targetPort: 15692
+
+# Fallback auth (used when vault.enabled: false)
+auth:
+  username: "username"
+  password: "password"
+
+# RabbitMQ plugins to enable
+plugins:
+  enabled:
+    - rabbitmq_management
+    - rabbitmq_prometheus
+    - rabbitmq_amqp1_0
+
+# Persistence configuration - AWS EBS
+persistence:
+  enabled: true
+  storageClass: "gp2"      # AWS EKS EBS storage class
+  accessMode: ReadWriteOnce
+  size: 5Gi
+
+# Resource limits
+resources:
+  requests:
+    cpu: 10m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+# Vault Configuration
+vault:
+  enabled: true
+  address: "https://vault.devopsproduction.com"
+  role: "rabbitmq"
+  secrets:
+    credentials:
+      path: "secret/data/rabbitmq"
+      template: |
+        {{- with secret "secret/data/rabbitmq" -}}
+        export RABBITMQ_DEFAULT_USER="{{ .Data.data.username }}"
+        export RABBITMQ_DEFAULT_PASS="{{ .Data.data.password }}"
+        {{- end }}
+
+# Prometheus metrics
+metrics:
+  enabled: true
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "15692"
+    prometheus.io/path: "/metrics"
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podAnnotations:
+  traffic.sidecar.istio.io/excludeOutboundPorts: "8200,8201"
+podLabels: {}

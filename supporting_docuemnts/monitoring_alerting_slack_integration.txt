@@ -1,0 +1,114 @@
+alertmanager:
+  configAnnotations:
+    vault.security.banzaicloud.io/vault-addr: "https://vault.vault.svc.cluster.local:8200"
+    vault.security.banzaicloud.io/vault-role: "alertmanager-role"        # Your Vault Kubernetes auth role
+    vault.security.banzaicloud.io/vault-skip-verify: "true"              # If you do not use a trusted CA in your lab
+    vault.security.banzaicloud.io/vault-path: "kubernetes"               # Default for K8s auth
+    vault.security.banzaicloud.io/vault-env-passthrough: "VAULT_ADDR,VAULT_ROLE"
+
+
+
+
+
+
+information of slack tool. keys and ids.
+
+
+Visit: https://api.slack.com/apps
+Click "Create New App" → "From scratch"
+Name your app (e.g., "Prometheus Alerts") and select your workspace
+Go to "Incoming Webhooks" → Enable Incoming Webhooks
+Click "Add New Webhook to Workspace"
+Choose the channel where you want alerts (e.g., #alerts)
+Copy the webhook URL (looks like: https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX)
+
+
+curl -X POST -H 'Content-type: application/json' --data '{"text":"Hello, World!"}' https://hooks.slack.com/services/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
+
+https://hooks.slack.com/services/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
+
+
+
+vault policy write alertmanager-policy - <<EOF
+path "kv/data/alertmanager" {
+  capabilities = ["read","list"]
+}
+
+path "kv/metadata/alertmanager" {
+  capabilities = ["read", "list"]
+}
+EOF
+
+
+vault kv put kv/alertmanager slack_webhook_url="https://hooks.slack.com/services/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"
+
+
+vault write auth/kubernetes/role/alertmanager-role \
+    bound_service_account_names=alertmanager \
+    bound_service_account_namespaces=monitoring \
+    policies=alertmanager-policy \
+    ttl=24h
+
+
+vault write auth/kubernetes/config \
+  kubernetes_host="https://kubernetes.default.svc:443" \
+  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+  token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token
+
+vault write auth/kubernetes/config \
+  token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+  kubernetes_host="https://kubernetes.default.svc:443" \
+  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt  
+
+
+
+for testing alertmanager with slack channel communication. 
+
+
+apk add --no-cache curl && curl -XPOST -d '[{"labels":{"alertname":"ManualTest","severity":"info"},"annotations":{"summary":"manual test"}}]' http://localhost:9093/api/v1/alerts
+
+
+
+curl -s -XPOST -H "Content-Type: application/json" -d '[
+  {
+    "labels": {
+      "alertname": "ManualTest",
+      "severity": "info"
+    },
+    "annotations": {
+      "summary": "This is a manual test alert from Alertmanager EKS setup"
+    }
+  }
+]' http://alertmanager.devopsproduction.com/api/v2/alerts
+
+
+i am working in a project there i had setup monitoring promethues, grafana, alertmanger. 
+now i am trying to setup slack tool integration with alertmenager. 
+slack have a webhook api which is i used from vault server here 
+i am facing issue while alert manger pod running alertmanger.yaml file will be placed 
+into /etc/alertmanger/alertmanager.yml location i am using vault agent injector. 
+now i am facing issue with vault agent adding file into /vault/secets/  location but not 
+into the /etc/alertmanger location. these are the configuration files. 
+
+
+
+
+curl -s -XPOST -H "Content-Type: application/json" -d '[
+  {
+    "labels": {
+      "alertname": "Store-App",
+      "severity": "info"
+    },
+    "annotations": {
+      "summary": "this alert is about our dev env api service went down"
+    }
+  }
+]' http://alertmanager.devopsproduction.com/api/v2/alerts
+
+
+
+
+helm upgrade prometheus /prometheus \
+  -n monitoring \
+  -f correct-alerts-final.yaml \
+  --reuse-values

@@ -1,0 +1,20 @@
+Running the app locally
+Prerequisites
+Rust
+Docker
+Docker Compose
+
+
+Running the app
+This app relies on the makeline-service and the mongodb instance running. A docker-compose file is provided to make this easy. The docker-compose file will also start the RabbitMQ, MongoDB, order-service, and virtual-customer services to simulate incoming orders.
+
+To run the necessary services, clone the repo, open a terminal, and navigate to the virtual-worker directory. Then run the following command:
+
+docker compose up
+
+With the services running, open a new terminal and navigate to the virtual-worker directory. Then run the following command:
+
+export MAKELINE_SERVICE_URL=http://localhost:3001
+export ORDERS_PER_HOUR=3600
+
+cargo run

@@ -1,0 +1,122 @@
+====================================================
+VAULT SETUP GUIDE - DSOP PROJECT
+====================================================
+
+
+====================================================
+STEP 1 - CREATE ACL POLICIES
+====================================================
+Go to: Policies > ACL Policies > Create policy
+
+1. Policy Name: ai-service-policy
+   Content:
+   path "secret/data/ai-service" {
+  capabilities = ["read"]
+}
+
+
+
+====================================================
+STEP 2 - CREATE AUTH ROLES
+====================================================
+Go to: Access > Auth Methods > kubernetes > Roles > Create role
+
+5. Role Name: ai-service
+   Bound service account names: ai-service
+   Bound service account namespaces: application
+   Token policies: ai-service-policy
+   Audience: https://kubernetes.default.svc   
+   Token TTL: 1h
+   Token Max TTL: 24h
+
+
+
+
+====================================================
+STEP 3 - CREATE SECRETS IN VAULT
+====================================================
+Go to: Secrets Engines > kv > Create secret
+
+9. Path: ai-service
+   Keys to add:
+   openai_api_key       = your-openai-api-key
+   openai_org_id        = your-openai-org-id
+   azure_openai_api_key = your-azure-openai-api-key
+
+
+
+
+====================================================
+STEP 4 - INSTALL VAULT AGENT INJECTOR IN EKS
+====================================================
+Run these commands from your local machine (kubectl must be pointing to EKS)
+
+13. Add hashicorp helm repo:
+    helm repo add hashicorp https://helm.releases.hashicorp.com
+    helm repo update
+
+14. Install vault injector only (no vault server):
+    helm install vault-agent hashicorp/vault \
+      --set "global.externalVaultAddr=https://vault.devopsproduction.com" \
+      --set "injector.enabled=true" \
+      --set "server.enabled=false" \
+      --namespace vault \
+      --create-namespace
+
+15. Verify injector pod is running:
+    kubectl get pods -n vault
+
+    Expected output:
+    vault-agent-vault-agent-injector-XXXXX   1/1   Running
+
+
+====================================================
+STEP 5 - UPDATE HELM CHARTS
+====================================================
+Only one annotation needs to be added to every vault-enabled service.
+Add this line in values.yaml under podAnnotations for each service:
+
+16. ai-service/values.yaml - add under podAnnotations:
+    vault.hashicorp.com/address: "https://vault.devopsproduction.com"
+
+
+
+
+====================================================
+NOTES
+====================================================
+- Namespace "vault" is where your services run (update if different)
+- Service account names must match what is in each helm chart values.yaml
+- KV secrets engine must be version 2 (path prefix is kv/data/)
+- The injector runs inside EKS but connects to external vault URL
+====================================================
+
+
+# Run on EKS machine - get CA cert
+kubectl get secret vault-auth-secret -n default \
+  -o jsonpath='{.data.ca\.crt}' | base64 --decode > /tmp/eks-ca.crt
+
+# Copy it to vault server
+scp /tmp/eks-ca.crt ubuntu@<vault-server-ip>:/tmp/eks-ca.crt
+
+# On EKS machine
+kubectl get secret vault-auth-secret -n default \
+  -o jsonpath='{.data.token}' | base64 --decode > /tmp/vault-auth-token.txt
+
+# Copy to vault server
+scp /tmp/vault-auth-token.txt ubuntu@<vault-server-ip>:/tmp/vault-auth-token.txt
+
+vault write auth/kubernetes/config \
+  kubernetes_host="https://814F691D5861CB5049391225C90DBCBE.gr7.us-east-1.eks.amazonaws.com" \
+  issuer="https://oidc.eks.us-east-1.amazonaws.com/id/814F691D5861CB5049391225C90DBCBE" \
+  kubernetes_ca_cert=@eks-ca.crt \
+  token_reviewer_jwt=@vault-auth-token.txt
+
+# Role binding for Vault Auth with EKS clsuter 
+
+kubectl create clusterrolebinding vault-auth-delegator \
+  --clusterrole=system:auth-delegator \
+  --serviceaccount=default:vault-auth
+
+# Verify it was created
+kubectl get clusterrolebinding vault-auth-delegator

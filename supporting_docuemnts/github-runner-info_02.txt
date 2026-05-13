@@ -1,0 +1,246 @@
+GITHUB ACTIONS SELF-HOSTED RUNNER INFORMATION
+Ubuntu Server Setup
+=======================================================================
+
+
+=======================================================================
+RUNNER DETAILS
+=======================================================================
+
+Runner Name        : dsop-host
+Custom Label       : dsop-runner
+Default Labels     : self-hosted, Linux, X64
+Runner Version     : 2.333.1
+Operating System   : Ubuntu Linux x64
+Status             : Listening for Jobs
+Work Folder        : _work
+Runner Group       : Default
+
+
+=======================================================================
+HOW TO USE THIS RUNNER IN WORKFLOWS
+=======================================================================
+
+Use any one of these in your workflow runs-on field depending on how
+specific you want to target the runner.
+
+    runs-on: self-hosted
+    (picks any available self-hosted runner)
+
+    runs-on: dsop-runner
+    (picks runner with the custom label dsop-runner)
+
+    runs-on: [self-hosted, dsop-runner]
+    (most specific, recommended option)
+
+
+=======================================================================
+RUNNER SERVICE COMMANDS
+=======================================================================
+
+Check runner service status
+    sudo systemctl status actions.runner.*
+
+Start the runner service
+    sudo ./svc.sh start
+
+Stop the runner service
+    sudo ./svc.sh stop
+
+Restart the runner service
+    sudo ./svc.sh stop && sudo ./svc.sh start
+
+View live runner logs
+    journalctl -u "actions.runner.*" -f
+
+View last 50 log lines
+    journalctl -u "actions.runner.*" -n 50 --no-pager
+
+
+=======================================================================
+BEFORE CREATING THE PIPELINE - SONARQUBE TOKEN SETUP
+=======================================================================
+
+Step 1 - Generate SonarQube Token
+    Open SonarQube UI at http://YOUR_SERVER_IP:9000
+    Login as admin
+    Go to My Account > Security
+    Click Generate Token
+    Give it a name like github-actions
+    Copy the generated token
+
+Step 2 - Add Token to GitHub Secrets
+    Go to your GitHub Repository
+    Click Settings > Secrets and variables > Actions
+    Click New repository secret
+    Name  : SONAR_TOKEN
+    Value : paste the token you copied from SonarQube
+    Click Add secret
+
+
+=======================================================================
+SAMPLE GITHUB ACTIONS PIPELINE
+=======================================================================
+
+File location in your repository : .github/workflows/python-sonar.yml
+
+-----------------------------------------------------------------------
+
+name: Python Build and SonarQube Scan
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-scan:
+    name: Build and Scan
+    runs-on: [self-hosted, dsop-runner]
+
+    steps:
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Tests with Coverage
+        run: |
+          pip install pytest pytest-cov
+          pytest --cov=./ --cov-report=xml --cov-report=term-missing
+        continue-on-error: true
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: http://localhost:9000
+
+-----------------------------------------------------------------------
+
+
+=======================================================================
+SONARQUBE PROJECT CONFIG FILE
+=======================================================================
+
+Create this file in the root of your repository.
+File name : sonar-project.properties
+
+-----------------------------------------------------------------------
+
+sonar.projectKey=my-python-app
+sonar.projectName=My Python App
+sonar.projectVersion=1.0
+
+sonar.sources=.
+sonar.exclusions=**/__pycache__/**,**/*.pyc,**/migrations/**,.venv/**
+
+sonar.python.version=3.11
+sonar.python.coverage.reportPaths=coverage.xml
+
+-----------------------------------------------------------------------
+
+
+=======================================================================
+PIPELINE FLOW EXPLANATION
+=======================================================================
+
+Step 1 - Checkout Code
+    Pulls your repository code onto the runner server.
+    fetch-depth 0 means full git history is downloaded.
+    SonarQube uses full history for accurate blame information.
+
+Step 2 - Set Up Python
+    Installs Python 3.11 on the runner for the build.
+
+Step 3 - Install Dependencies
+    Upgrades pip and installs all packages from requirements.txt.
+
+Step 4 - Run Tests with Coverage
+    Runs pytest and generates a coverage.xml report.
+    continue-on-error is true so the scan still runs even if tests fail.
+
+Step 5 - SonarQube Scan
+    Sends your code and coverage report to SonarQube.
+    Uses localhost:9000 because the runner and SonarQube are on the same server.
+    Results appear in SonarQube UI after this step completes.
+
+
+=======================================================================
+WHERE TO SEE RESULTS
+=======================================================================
+
+SonarQube Results
+    Open browser and go to http://YOUR_SERVER_IP:9000
+    Login with admin credentials
+    Click Projects
+    Click your project name My Python App
+    You will see Bugs, Vulnerabilities, Code Smells and Coverage percentage
+
+GitHub Pipeline Results
+    Go to your GitHub Repository
+    Click the Actions tab at the top
+    Click the latest workflow run
+    Click each step to see detailed logs in real time
+
+
+=======================================================================
+IMPORTANT NOTES
+=======================================================================
+
+Runner and SonarQube are on the same server so SONAR_HOST_URL uses
+localhost:9000 instead of a public IP address.
+
+The SONAR_TOKEN is stored in GitHub Secrets and never exposed in the
+pipeline code or logs.
+
+fetch-depth 0 in the checkout step is required for SonarQube to
+analyze code history and show accurate issue blame information.
+
+The sonar-project.properties file must be present in the root of your
+repository for the scan to work correctly.
+
+
+=======================================================================
+TROUBLESHOOTING
+=======================================================================
+
+Runner not picking up jobs from GitHub
+    sudo systemctl restart actions.runner.*
+    Check runner status at GitHub Repo > Settings > Actions > Runners
+
+SonarQube scan step fails
+    sudo tail -f /opt/sonarqube/logs/sonar.log
+    Make sure SonarQube is running: sudo systemctl status sonarqube
+    Make sure SONAR_TOKEN secret is added correctly in GitHub
+
+Python dependencies fail to install
+    Make sure requirements.txt exists in your repository root
+    Check that Python 3.11 is compatible with your packages
+
+Coverage report not showing in SonarQube
+    Make sure pytest-cov ran successfully and coverage.xml was created
+    Check that sonar.python.coverage.reportPaths=coverage.xml is in sonar-project.properties
+
+View runner logs while pipeline is running
+    journalctl -u "actions.runner.*" -f
+
+
+=======================================================================
+END OF FILE
+=======================================================================

@@ -1,0 +1,207 @@
+# helm-charts/product-service/values.yaml
+replicaCount: 1
+
+image:
+  repository: 357229909289.dkr.ecr.us-east-1.amazonaws.com/dsop/product-service
+  tag: "1.0.6-1132538"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "product-service"
+
+service:
+  name: product-service
+  type: ClusterIP
+  port: 3002
+  targetPort: 3002
+
+# Argo Rollouts Strategy
+strategy:
+  type: canary
+  canary:
+    dynamicStableScale: true        
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 30s          
+      - analysis:
+          templates:
+            - templateName: product-service-analysis
+      - setWeight: 40
+      - pause:
+          duration: 30s             
+      - analysis:
+          templates:
+            - templateName: product-service-analysis
+      - setWeight: 60
+      - pause:
+          duration: 30s           
+      - analysis:
+          templates:
+            - templateName: product-service-analysis
+      - setWeight: 80
+      - pause:
+          duration: 30s           
+      - analysis:
+          templates:
+            - templateName: product-service-analysis
+      - setWeight: 100
+    trafficRouting:
+      istio:
+        virtualService:
+          name: product-service
+          routes:
+            - primary
+    analysisInterval: 1m
+    analysisSuccessCount: 5
+    analysisFailureLimit: 3
+
+# ← SINGLE podAnnotations definition — no duplicate at bottom
+podAnnotations:
+  traffic.sidecar.istio.io/excludeOutboundPorts: "4318,8126"
+  proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+
+# Istio Configuration
+istio:
+  enabled: true
+  gateway:
+    enabled: false
+  virtualService:
+    enabled: true
+    hosts:
+      - product-service
+    timeout: "180s"  
+  destinationRule:
+    enabled: true
+
+# HPA Configuration
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 3
+          periodSeconds: 15
+      selectPolicy: Max
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Probes
+probes:
+  startup:
+    httpGet:
+      path: /health
+      port: 3002
+    initialDelaySeconds: 20
+    failureThreshold: 5
+    periodSeconds: 10
+  readiness:
+    httpGet:
+      path: /health
+      port: 3002
+    initialDelaySeconds: 3
+    failureThreshold: 3
+    periodSeconds: 5
+  liveness:
+    httpGet:
+      path: /health
+      port: 3002
+    initialDelaySeconds: 3
+    failureThreshold: 5
+    periodSeconds: 3
+
+# Environment variables
+env:
+  - name: AI_SERVICE_URL
+    value: "http://ai-service.application.svc.cluster.local:5001/"
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "http://$(DD_AGENT_HOST):4318"
+
+# Vault Configuration - DISABLED
+vault:
+  enabled: false
+
+# Datadog Configuration
+datadog:
+  enabled: true
+  site: "us5.datadoghq.com"
+  env: production
+  service: product-service
+  logs:
+    enabled: true
+  apm:
+    enabled: true
+    language: rust
+  profiling:
+    enabled: false
+
+# Prometheus Metrics
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    path: /metrics
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+affinity: {}
+podLabels: {}
+
+initContainers: []
+
+analysis:
+  enabled: true
+  provider: datadog
+  datadog:
+    secretName: datadog-secret
+    metrics:
+      - name: error-rate
+        query: "avg:trace.http.request.errors{service:product-service,env:production}.as_rate()"
+        successCondition: "default(result, 0) < 0.05"
+        failureLimit: 1             
+        consecutiveErrorLimit: 5    
+        interval: 10s             
+        count: 3                  
+      - name: p95-latency
+        query: "avg:trace.http.request.duration.by.service.95p{service:product-service,env:production}"
+        successCondition: "default(result, 0) < 1000"
+        failureLimit: 1             
+        consecutiveErrorLimit: 5   
+        interval: 10s              
+        count: 3                 

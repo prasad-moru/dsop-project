@@ -1,0 +1,139 @@
+# =============================================================================
+# kiali-values.yaml
+# Helm chart : kiali/kiali-server
+# Repo       : https://kiali.org/helm-charts
+# Version    : 1.82.x (compatible with Istio 1.29.x)
+#
+# Prometheus : kube-prometheus-stack (monitoring namespace)
+#              http://kube-prometheus-stack-prometheus.monitoring:9090
+# Tracing    : Jaeger all-in-one (istio-system namespace)
+# Grafana    : kube-prometheus-stack Grafana (monitoring namespace)
+#
+# Install:
+#   helm repo add kiali https://kiali.org/helm-charts
+#   helm repo update
+#   helm install kiali-server kiali/kiali-server \
+#     -f kiali-values.yaml \
+#     -n istio-system
+# =============================================================================
+
+# Kiali image
+image:
+  repo: quay.io/kiali/kiali
+  tag: v1.82.0
+  pullPolicy: IfNotPresent
+
+# ── Deployment ────────────────────────────────────────────────────────────────
+deployment:
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # Ingress for Kiali UI via ALB
+  ingress:
+    enabled: true
+    class_name: "alb"
+    override_yaml:
+      metadata:
+        annotations:
+          kubernetes.io/ingress.class: alb
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+          alb.ingress.kubernetes.io/ssl-redirect: "443"
+          # TODO: replace with your ACM cert ARN
+          alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:357229909289:certificate/7d123239-4cc6-40a0-9ead-a0320842518e"
+          alb.ingress.kubernetes.io/backend-protocol: HTTP
+          alb.ingress.kubernetes.io/healthcheck-path: "/kiali/healthz"
+          alb.ingress.kubernetes.io/success-codes: "200-399"
+          alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+          alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+      spec:
+        ingressClassName: alb
+        rules:
+          - host: kiali.devopsproduction.com    # TODO: update to your domain
+            http:
+              paths:
+                - path: /*
+                  pathType: ImplementationSpecific
+                  backend:
+                    service:
+                      name: kiali
+                      port:
+                        number: 20001
+
+# ── Kiali configuration ───────────────────────────────────────────────────────
+kiali_feature_flags:
+  disabled_features: []
+
+server:
+  port: 20001
+  web_root: "/kiali"
+
+# ── Auth — anonymous for Udemy demo ──────────────────────────────────────────
+# PRODUCTION: change to token or openid
+auth:
+  strategy: anonymous
+
+# ── External services wiring ──────────────────────────────────────────────────
+external_services:
+
+  # Prometheus — your existing kube-prometheus-stack
+  prometheus:
+    url: "http://kube-prometheus-stack-prometheus.monitoring:9090"
+    auth:
+      type: none
+
+  # Grafana — your existing kube-prometheus-stack Grafana
+  grafana:
+    enabled: true
+    in_cluster_url: "http://kube-prometheus-stack-grafana.monitoring:80"
+    url: "https://grafana.devopsproduction.com"    # TODO: update to your domain
+    auth:
+      type: none
+
+  # Jaeger tracing — all-in-one in istio-system
+  tracing:
+    enabled: true
+    in_cluster_url: "http://jaeger-query.istio-system:16686"
+    url: "https://jaeger.devopsproduction.com"     # TODO: update to your domain
+    use_grpc: false
+    provider: jaeger
+
+  # Istio control plane
+  istio:
+    root_namespace: istio-system
+    component_status:
+      enabled: true
+      components:
+        - app_label: istiod
+          is_core: true
+          is_proxy: false
+
+  # Custom dashboards disabled for demo
+  custom_dashboards:
+    enabled: false
+
+# ── Istio namespace config ────────────────────────────────────────────────────
+istio_namespace: istio-system
+
+# ── Namespaces Kiali will monitor ─────────────────────────────────────────────
+# Empty = monitor all namespaces Kiali has access to
+# Kiali will show: application, platform, istio-system, monitoring
+accessible_namespaces:
+  - "**"
+
+# ── Labels ────────────────────────────────────────────────────────────────────
+additional_display_details:
+  - annotation: kiali.io/api-type
+    title: "API Type"
+
+podLabels:
+  app: kiali
+  project: dsop-project

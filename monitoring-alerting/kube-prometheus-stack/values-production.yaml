@@ -1,0 +1,725 @@
+# =============================================================================
+# kube-prometheus-stack — Production Values
+# Cluster   : dsop-project-dev  (EKS K8s 1.30+)
+# Region    : us-east-1  (AZ: us-east-1a / us-east-1b)
+# NodeGroup : Dsop-Project-dev-nodes  (t3.medium — 2vCPU / 4 GB)
+# Storage   : gp2  (explicit on every PVC — no default StorageClass set)
+# Ingress   : AWS ALB Ingress Controller
+# Vault     : https://vault.devopsproduction.com  KV-v2  path: secret/
+# Vault SA  : vault-agent-agent-injector (vault namespace)
+# CI/CD     : ArgoCD + GitHub Actions
+# Namespaces monitored: application, platform, monitoring, kube-system,
+#             istio-system, argocd, vault
+# =============================================================================
+
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+# ── Global ────────────────────────────────────────────────────────────────────
+global:
+  rbac:
+    create: true
+    createAggregateClusterRoles: false
+  imagePullSecrets: []
+
+# ── CRDs ─────────────────────────────────────────────────────────────────────
+crds:
+  enabled: true
+
+# ── Common labels on every resource ──────────────────────────────────────────
+commonLabels:
+  project: dsop-project
+  managed-by: argocd
+
+# ── Default alert rules (keep all enabled — 200+ rules out of the box) ───────
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: true
+    configReloaders: true
+    general: true
+    k8sContainerCpuUsageSecondsTotal: true
+    k8sContainerMemoryCache: true
+    k8sContainerMemoryRss: true
+    k8sContainerMemorySwap: true
+    k8sContainerResource: true
+    k8sContainerMemoryWorkingSetBytes: true
+    k8sPodOwner: true
+    kubeApiserverAvailability: true
+    kubeApiserverBurnrate: true
+    kubeApiserverHistogram: true
+    kubeApiserverSlos: true
+    kubeControllerManager: true
+    kubelet: true
+    kubeProxy: true
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    kubeSchedulerAlerting: true
+    kubeSchedulerRecording: true
+    kubeStateMetrics: true
+    network: true
+    node: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: true
+
+  appNamespacesTarget: "application|platform|monitoring|argocd|vault|istio-system"
+  runbookUrl: "https://runbooks.prometheus-operator.dev/runbooks"
+
+# =============================================================================
+# ALERTMANAGER
+# Vault Agent Injector renders Slack webhook URL into:
+#   /vault/secrets/slack-webhook
+# Alertmanager reads it via api_url_file — secret never hits etcd.
+# =============================================================================
+alertmanager:
+  enabled: true
+
+  serviceAccount:
+    create: true
+    name: "kube-prometheus-stack-alertmanager"
+    annotations: {}
+    automountServiceAccountToken: true
+
+  alertmanagerSpec:
+    # ── Vault Agent sidecar injection ────────────────────────────────────────
+    # Vault KV v2 path: secret/data/monitoring/alertmanager
+    # Rendered file:    /vault/secrets/slack-webhook (only the URL, no newline)
+    podMetadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-status: "update"
+        vault.hashicorp.com/role: "alertmanager"
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/agent-inject-secret-slack-webhook: "secret/data/monitoring/alertmanager"
+        vault.hashicorp.com/agent-inject-template-slack-webhook: |
+          {{- with secret "secret/data/monitoring/alertmanager" -}}{{ .Data.data.slack_webhook_url }}{{- end }}
+
+    image:
+      registry: quay.io
+      repository: prometheus/alertmanager
+      tag: v0.32.0
+      pullPolicy: IfNotPresent
+
+    # ── Node placement ────────────────────────────────────────────────────────
+    nodeSelector:
+      eks.amazonaws.com/nodegroup: Dsop-Project-dev-nodes
+
+    # ── Resources (t3.medium — be conservative) ───────────────────────────────
+    # WARNING: t3.medium has 4 GB total. Upsize to t3.large for production.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 100Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+    # ── Persistent storage ───────────────────────────────────────────────────
+    # gp2 is the only StorageClass — no default set, must be explicit.
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+    replicas: 1
+    retention: 120h
+    logLevel: info
+    logFormat: logfmt
+
+    podAntiAffinity: "soft"
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+
+    securityContext:
+      runAsGroup: 2000
+      runAsNonRoot: true
+      runAsUser: 1000
+      fsGroup: 2000
+      seccompProfile:
+        type: RuntimeDefault
+
+  # ── Alertmanager routing config ─────────────────────────────────────────────
+  # api_url_file reads from the Vault-injected file — no plaintext secrets.
+  # Update channel names to match your Slack workspace.
+  # TODO: Create these channels in Slack before deploying:
+  #   #dsop-alerts-critical
+  #   #dsop-alerts-warning
+  config:
+    global:
+      resolve_timeout: 5m
+
+    inhibit_rules:
+      - source_matchers:
+          - 'severity = critical'
+        target_matchers:
+          - 'severity =~ warning|info'
+        equal:
+          - 'namespace'
+          - 'alertname'
+      - source_matchers:
+          - 'severity = warning'
+        target_matchers:
+          - 'severity = info'
+        equal:
+          - 'namespace'
+          - 'alertname'
+      - source_matchers:
+          - 'alertname = InfoInhibitor'
+        target_matchers:
+          - 'severity = info'
+        equal:
+          - 'namespace'
+      - target_matchers:
+          - 'alertname = InfoInhibitor'
+
+    route:
+      group_by: ['namespace', 'alertname', 'cluster']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: 'slack-warning'
+      routes:
+        - receiver: 'null'
+          matchers:
+            - alertname = "Watchdog"
+        - receiver: 'slack-critical'
+          matchers:
+            - 'severity = critical'
+          group_wait: 10s
+          repeat_interval: 1h
+          continue: false
+        - receiver: 'slack-warning'
+          matchers:
+            - 'severity = warning'
+
+    receivers:
+      - name: 'null'
+
+      - name: 'slack-critical'
+        slack_configs:
+          - api_url_file: /vault/secrets/slack-webhook   # Vault-injected
+            channel: '#alert-manager-testing'             # TODO: update channel name
+            send_resolved: true
+            icon_emoji: ':fire:'
+            title: >-
+              [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}]
+              {{ .CommonLabels.alertname }} — {{ .CommonLabels.namespace }}
+            text: |-
+              {{ range .Alerts }}
+              *Severity:*    `{{ .Labels.severity }}`
+              *Cluster:*     `{{ .Labels.cluster }}`
+              *Namespace:*   `{{ .Labels.namespace }}`
+              *Summary:*     {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              *Runbook:*     {{ .Annotations.runbook_url }}
+              *Started:*     {{ .StartsAt | since }}
+              {{ end }}
+
+      - name: 'slack-warning'
+        slack_configs:
+          - api_url_file: /vault/secrets/slack-webhook   # Vault-injected
+            channel: '#alert-manager-testing'              # TODO: update channel name
+            send_resolved: true
+            icon_emoji: ':warning:'
+            title: >-
+              [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+              — {{ .CommonLabels.namespace }}
+            text: |-
+              {{ range .Alerts }}
+              *Severity:*  `{{ .Labels.severity }}`
+              *Namespace:* `{{ .Labels.namespace }}`
+              *Summary:*   {{ .Annotations.summary }}
+              {{ end }}
+
+    templates:
+      - '/etc/alertmanager/config/*.tmpl'
+
+  serviceMonitor:
+    selfMonitor: true
+    interval: ""
+
+  service:
+    type: ClusterIP
+    port: 9093
+
+# =============================================================================
+# GRAFANA
+# Admin credentials injected from Vault via existingSecret.
+# Run vault-k8s-auth-setup.sh to create the k8s Secret first.
+# ALB ingress — replace TODO values before deploying.
+# =============================================================================
+grafana:
+  enabled: true
+  namespaceOverride: ""
+
+  # ── Admin credentials ─────────────────────────────────────────────────────
+  # Created by vault-k8s-auth-setup.sh as a Kubernetes Secret
+  # named 'grafana-admin-credentials' in the monitoring namespace.
+  admin:
+    existingSecret: "grafana-admin-credentials"
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # ── Persistence ──────────────────────────────────────────────────────────
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: gp2          # explicit — no default StorageClass
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    finalizers:
+      - kubernetes.io/pvc-protection
+
+  # ── Resources (t3.medium aware) ───────────────────────────────────────────
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+  # ── Node placement ────────────────────────────────────────────────────────
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: Dsop-Project-dev-nodes
+
+  # ── ALB Ingress ───────────────────────────────────────────────────────────
+  # TODO before deploying:
+  #   1. Replace certificate-arn with your ACM cert ARN
+  #   2. Replace host with your actual domain (e.g. grafana.devopsproduction.com)
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:357229909289:certificate/7d123239-4cc6-40a0-9ead-a0320842518e"  # TODO
+      alb.ingress.kubernetes.io/healthcheck-path: /api/health
+      alb.ingress.kubernetes.io/group.name: "monitoring"
+    hosts:
+      - grafana.devopsproduction.com    # TODO: update to your domain
+    paths:
+      - /
+    pathType: Prefix
+
+  # ── Dashboards and datasources ────────────────────────────────────────────
+  defaultDashboardsEnabled: true
+  defaultDashboardsTimezone: Asia/Kolkata    # IST — Hyderabad team
+  defaultDashboardsEditable: true
+  defaultDashboardsInterval: 1m
+
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL               # pick up dashboards from all namespaces
+      enableNewTablePanelSyntax: false
+    datasources:
+      enabled: true
+      defaultDatasourceEnabled: true
+      isDefaultDatasource: true
+      name: Prometheus
+      uid: prometheus
+      httpMethod: POST
+      alertmanager:
+        enabled: true
+        name: Alertmanager
+        uid: alertmanager
+        handleGrafanaManagedAlerts: false
+        implementation: prometheus
+
+  serviceAccount:
+    create: true
+    autoMount: true
+
+  serviceMonitor:
+    enabled: true
+    interval: ""
+    scrapeTimeout: 30s
+
+# =============================================================================
+# PROMETHEUS
+# Key production settings:
+#  - serviceMonitorSelectorNilUsesHelmValues: false  → picks up ALL namespaces
+#  - externalLabels → cluster identification in every metric/alert
+#  - 30-day retention on gp2 PVC
+#  - Conservative resources for t3.medium
+# =============================================================================
+prometheus:
+  enabled: true
+
+  serviceAccount:
+    create: true
+    name: "kube-prometheus-stack-prometheus"
+    annotations: {}
+    automountServiceAccountToken: true
+
+  prometheusSpec:
+    # ── CRITICAL: pick up ServiceMonitors from ALL namespaces ─────────────────
+    # Without these false flags, Prometheus only sees its own helm release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}     # all namespaces
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
+
+    # ── Cluster identification (appears in every metric + alert) ──────────────
+    externalLabels:
+      cluster: dsop-project-dev
+      environment: dev
+      region: us-east-1
+
+    # ── Scrape settings ───────────────────────────────────────────────────────
+    scrapeInterval: "30s"
+    scrapeTimeout: "10s"
+    evaluationInterval: "30s"
+
+    # ── Retention ─────────────────────────────────────────────────────────────
+    retention: 30d
+    retentionSize: "45GiB"     # slightly under PVC size to avoid OOM
+    walCompression: true
+
+    # ── Image ─────────────────────────────────────────────────────────────────
+    image:
+      registry: quay.io
+      repository: prometheus/prometheus
+      tag: v3.11.3
+      pullPolicy: IfNotPresent
+
+    # ── Resources ─────────────────────────────────────────────────────────────
+    # WARNING: t3.medium (4 GB total). Prometheus alone requests 1 GB.
+    # If you see OOMKilled, either reduce scrape targets or upsize to t3.large.
+    resources:
+      requests:
+        cpu: 300m
+        memory: 1Gi
+      limits:
+        cpu: 1500m
+        memory: 3Gi
+
+    # ── Persistent storage ────────────────────────────────────────────────────
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2          # explicit — no default StorageClass
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+    # ── Node placement ────────────────────────────────────────────────────────
+    nodeSelector:
+      eks.amazonaws.com/nodegroup: Dsop-Project-dev-nodes
+
+    replicas: 1
+    shards: 1
+
+    podAntiAffinity: "soft"
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+
+    logLevel: info
+    logFormat: logfmt
+
+    securityContext:
+      runAsGroup: 2000
+      runAsNonRoot: true
+      runAsUser: 1000
+      fsGroup: 2000
+      seccompProfile:
+        type: RuntimeDefault
+
+    # ── Admin API disabled in production ─────────────────────────────────────
+    enableAdminAPI: false
+
+    # ── Alertmanager endpoint (auto-wired by Operator) ────────────────────────
+    alertingEndpoints: []
+
+  serviceMonitor:
+    selfMonitor: true
+    interval: ""
+
+  service:
+    type: ClusterIP
+    port: 9090
+
+# =============================================================================
+# PROMETHEUS OPERATOR
+# =============================================================================
+prometheusOperator:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: Dsop-Project-dev-nodes
+
+  serviceMonitor:
+    selfMonitor: true
+
+  tls:
+    enabled: true
+    tlsMinVersion: VersionTLS13
+
+  admissionWebhooks:
+    enabled: true
+    timeoutSeconds: 10
+
+  kubeletService:
+    enabled: true
+    namespace: kube-system
+
+  env:
+    GOGC: "30"
+
+# =============================================================================
+# NODE EXPORTER  —  DaemonSet, runs on every node automatically
+# =============================================================================
+nodeExporter:
+  enabled: true
+
+prometheus-node-exporter:
+  podLabels:
+    jobLabel: node-exporter
+  releaseLabel: true
+  extraArgs:
+    - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+  resources:
+    requests:
+      cpu: 30m
+      memory: 50Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  prometheus:
+    monitor:
+      enabled: true
+      jobLabel: jobLabel
+      interval: "30s"
+
+# =============================================================================
+# KUBE-STATE-METRICS  —  K8s object state (pods, deployments, HPAs, PVCs...)
+# =============================================================================
+kubeStateMetrics:
+  enabled: true
+
+kube-state-metrics:
+  releaseLabel: true
+  prometheusScrape: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: Dsop-Project-dev-nodes
+  prometheus:
+    monitor:
+      enabled: true
+      http:
+        honorLabels: true
+      metrics:
+        honorLabels: true
+
+# =============================================================================
+# COMPONENT SCRAPERS
+# Note: EKS manages etcd/controller-manager/scheduler — these components
+# may not expose /metrics directly. kubeEtcd is effectively via CloudWatch.
+# =============================================================================
+kubernetesServiceMonitors:
+  enabled: true
+
+kubeApiServer:
+  enabled: true
+  tlsConfig:
+    serverName: kubernetes
+    insecureSkipVerify: false
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+    metricRelabelings:
+      - action: drop
+        regex: (etcd_request|apiserver_request_slo|apiserver_request_sli|apiserver_request)_duration_seconds_bucket;(0\.15|0\.2|0\.3|0\.35|0\.4|0\.45|0\.6|0\.7|0\.8|0\.9|1\.25|1\.5|1\.75|2|3|3\.5|4|4\.5|6|7|8|9|15|20|40|45|50)(\.0)?
+        sourceLabels:
+          - __name__
+          - le
+
+kubelet:
+  enabled: true
+  namespace: kube-system
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+    https: true
+    insecureSkipVerify: true
+    cAdvisor: true
+    cAdvisorInterval: "30s"
+    resource: false
+    cAdvisorMetricRelabelings:
+      - sourceLabels: [__name__]
+        action: drop
+        regex: 'container_cpu_(cfs_throttled_seconds_total|load_average_10s|system_seconds_total|user_seconds_total)'
+      - sourceLabels: [__name__]
+        action: drop
+        regex: 'container_fs_(io_current|io_time_seconds_total|io_time_weighted_seconds_total|reads_merged_total|sector_reads_total|sector_writes_total|writes_merged_total)'
+      - sourceLabels: [__name__]
+        action: drop
+        regex: 'container_memory_(mapped_file|swap)'
+      - sourceLabels: [__name__]
+        action: drop
+        regex: 'container_(file_descriptors|tasks_state|threads_max)'
+      - sourceLabels: [id, pod]
+        action: drop
+        regex: '.+;'
+      - sourceLabels: [__name__]
+        action: drop
+        regex: 'container_spec.*'
+
+kubeControllerManager:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+
+coreDns:
+  enabled: true
+  service:
+    enabled: true
+    port: 9153
+    targetPort: 9153
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+
+# EKS manages etcd — direct scrape not available, metrics via CloudWatch
+kubeEtcd:
+  enabled: false
+
+kubeScheduler:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+
+kubeProxy:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: "30s"
+
+# =============================================================================
+# ADDITIONAL SERVICEMONITORS for your namespaces
+# These are defined here so ArgoCD picks them up with the same Helm release.
+# =============================================================================
+prometheus:
+  additionalServiceMonitors:
+    # ── MongoDB exporter (already in your monitoring folder) ──────────────────
+    - name: mongodb-exporter
+      jobLabel: mongodb-exporter
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus-mongodb-exporter
+      namespaceSelector:
+        matchNames:
+          - monitoring
+      endpoints:
+        - port: metrics
+          interval: 30s
+          path: /metrics
+
+    # ── Application namespace microservices ───────────────────────────────────
+    # Add ServiceMonitor per microservice that exposes /metrics.
+    # This is a catch-all for services with the label 'prometheus.io/scrape: "true"'
+    - name: application-services
+      jobLabel: app
+      selector:
+        matchLabels:
+          prometheus.io/scrape: "true"
+      namespaceSelector:
+        matchNames:
+          - application
+          - platform
+      endpoints:
+        - port: http
+          interval: 30s
+          path: /metrics
+          relabelings:
+            - sourceLabels: [__meta_kubernetes_pod_node_name]
+              targetLabel: node
+            - sourceLabels: [__meta_kubernetes_namespace]
+              targetLabel: namespace
+            - sourceLabels: [__meta_kubernetes_pod_name]
+              targetLabel: pod
+
+    # ── Istio control plane ───────────────────────────────────────────────────
+    - name: istio-pilot
+      jobLabel: istio-pilot
+      selector:
+        matchLabels:
+          app: istiod
+      namespaceSelector:
+        matchNames:
+          - istio-system
+      endpoints:
+        - port: http-monitoring
+          interval: 30s
+          path: /metrics
+
+    # ── ArgoCD ────────────────────────────────────────────────────────────────
+    - name: argocd-metrics
+      jobLabel: argocd
+      selector:
+        matchLabels:
+          app.kubernetes.io/part-of: argocd
+      namespaceSelector:
+        matchNames:
+          - argocd
+      endpoints:
+        - port: metrics
+          interval: 30s
+          path: /metrics
+
+# =============================================================================
+# THANOS — disabled now, enable when you need > 30-day retention
+# Uncomment the block below and set your S3 bucket details
+# =============================================================================
+# prometheus:
+#   prometheusSpec:
+#     thanos:
+#       image: quay.io/thanos/thanos:v0.35.0
+#       objectStorageConfig:
+#         secret:
+#           type: S3
+#           config:
+#             bucket: dsop-thanos-metrics
+#             endpoint: s3.us-east-1.amazonaws.com
+#             region: us-east-1

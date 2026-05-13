@@ -1,0 +1,48 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtual-customer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: virtual-customer
+  template:
+    metadata:
+      labels:
+        app: virtual-customer
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      containers:
+        - name: virtual-customer
+          image: prasad890/virtual-customer:1.0.0
+          env:
+            - name: ORDER_SERVICE_URL
+              value: http://order-service:3000/
+            - name: ORDERS_PER_HOUR
+              value: "3600"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 10Mi
+            limits:
+              cpu: 100m
+              memory: 50Mi
+          readinessProbe:
+            exec:
+              command:
+                - cat
+                - /proc/1/status
+            failureThreshold: 3
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - cat
+                - /proc/1/status
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            periodSeconds: 10

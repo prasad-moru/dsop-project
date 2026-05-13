@@ -1,0 +1,25 @@
+replicaCount: 2
+
+image:
+  repository: 357229909289.dkr.ecr.us-east-1.amazonaws.com/dsop/nginx-test
+  pullPolicy: Always
+  tag: "1.0.0"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  scheme: internet-facing        # or internal
+  certificateArn: ""             # leave empty for HTTP only
+  annotations:
+    alb.ingress.kubernetes.io/tags: Environment=dev,Team=platform
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

@@ -1,0 +1,94 @@
+kubectl create ns argocd
+
+
+helm install argocd argo-cd -f argo-cd/values.yaml -n argocd
+
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+https://argocd.devopsproduction.com/
+admin
+rLdcb26Msi5aqE7S
+
+You / CI Pipeline
+       │
+       ▼
+ argocd-server  ◄──── argocd-dex-server (auth)
+       │
+       ▼
+argocd-application-controller
+       │               │
+       ▼               ▼
+argocd-repo-server   Kubernetes API
+  (fetch Git)        (apply manifests)
+       │
+    argocd-redis (cache)
+
+argocd-applicationset-controller  →  creates Application CRDs
+argocd-notifications-controller   →  sends alerts on events
+
+
+1. argocd-application-controller-0
+The brain of ArgoCD. It's a Kubernetes controller that:
+
+Continuously watches your live cluster state vs the desired state in Git
+Detects drift (OutOfSync) and triggers sync operations
+Runs as a StatefulSet (note the -0 suffix, not a random hash)
+Handles the reconciliation loop for all Application CRDs
+
+
+2. argocd-applicationset-controller
+A templating engine for Applications. It:
+
+Manages ApplicationSet CRDs, which auto-generate multiple ArgoCD Application objects from a single template
+Useful for multi-cluster or multi-environment deployments (e.g., one ApplicationSet → dev/staging/prod apps)
+
+
+3. argocd-dex-server
+Handles SSO / Authentication. It:
+
+Is an embedded identity provider (based on Dex)
+Integrates with external IdPs like GitHub, LDAP, OIDC, SAML
+If you're only using local users, this pod is mostly idle
+
+
+4. argocd-notifications-controller
+Manages alerts and notifications. It:
+
+Sends notifications on app sync success/failure, health changes, etc.
+Supports Slack, Email, PagerDuty, Teams, Webhook, and more
+Configured via ConfigMap with triggers and templates
+
+
+5. argocd-redis
+In-memory cache for ArgoCD. It:
+
+Caches cluster state, app manifests, and repo data
+Reduces repeated expensive Git/K8s API calls
+Not used for persistent storage — data is re-built on restart
+
+
+6. argocd-repo-server
+The Git interface. It:
+
+Clones and caches Git repositories
+Renders manifests from Helm, Kustomize, Jsonnet, or plain YAML
+Serves rendered manifests to the Application Controller
+The most CPU-intensive component during syncs
+
+
+7. argocd-server
+The API & UI server. It:
+
+Serves the ArgoCD Web UI
+Exposes the gRPC/REST API (used by argocd CLI)
+Handles user authentication and RBAC enforcement
+The component you expose via Ingress or LoadBalancer
+
+
+GitHub token : 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
+
+
+git clone https://prasadmoru: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@github.com/prasad-moru/dsop-project.git
+
+
+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

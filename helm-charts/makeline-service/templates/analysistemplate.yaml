@@ -1,0 +1,28 @@
+{{- if .Values.analysis.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "makeline-service.fullname" . }}-analysis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "makeline-service.labels" . | nindent 4 }}
+spec:
+  metrics:
+  {{- if eq .Values.analysis.provider "datadog" }}
+  {{- range .Values.analysis.datadog.metrics }}
+  - name: {{ .name }}
+    interval: {{ .interval }}
+    count: {{ .count }}
+    failureLimit: {{ .failureLimit }}
+    consecutiveErrorLimit: {{ .consecutiveErrorLimit | default 5 }}
+    successCondition: {{ .successCondition | quote }}
+    provider:
+      datadog:
+        apiVersion: v1
+        site: {{ $.Values.datadog.site | quote }}
+        secretRef:
+          name: {{ $.Values.analysis.datadog.secretName }}
+        query: {{ .query | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}

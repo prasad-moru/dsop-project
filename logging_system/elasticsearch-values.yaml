@@ -1,0 +1,202 @@
+# =============================================================================
+# elasticsearch-values.yaml
+# Helm chart : elastic/elasticsearch
+# Repo       : https://helm.elastic.co
+# Version    : 8.5.1 (last free-tier compatible version without license issues)
+#
+# Cluster context:
+#   7 × t3.medium nodes (4 GB RAM each)
+#   gp2 StorageClass — explicit on every PVC (no default SC set)
+#   This is a Udemy learning project — resource limits are demo-sized.
+#
+# PRODUCTION NOTE:
+#   In production, ES heap should be 4 GB minimum on a t3.large dedicated node.
+#   For this demo, 1 GB heap works for low log volume (<1000 lines/sec).
+#
+# Install:
+#   helm repo add elastic https://helm.elastic.co
+#   helm repo update
+#   helm install elasticsearch elastic/elasticsearch \
+#     -f elasticsearch-values.yaml \
+#     -n logging --create-namespace
+# =============================================================================
+
+clusterName: "dsop-elk"
+nodeGroup: "master"
+
+# ── Single-node cluster for demo (no replicas) ───────────────────────────────
+masterService: "elasticsearch-master"
+roles:
+  - master
+  - data
+  - ingest
+
+replicas: 1
+minimumMasterNodes: 1
+
+# ── Image ─────────────────────────────────────────────────────────────────────
+image: "docker.elastic.co/elasticsearch/elasticsearch"
+imageTag: "8.5.1"
+imagePullPolicy: "IfNotPresent"
+
+# ── JVM heap — 1 GB for t3.medium demo ───────────────────────────────────────
+# PRODUCTION: change to -Xms4g -Xmx4g on a t3.large dedicated node
+esJavaOpts: "-Xmx1g -Xms1g"
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1.5Gi"
+  limits:
+    cpu: "1000m"
+    memory: "2Gi"       # heap 1G + OS overhead 1G
+
+# ── Persistent storage ────────────────────────────────────────────────────────
+# gp2 must be explicit — no default StorageClass on this cluster
+persistence:
+  enabled: true
+  labels:
+    enabled: false
+  annotations: {}
+
+volumeClaimTemplate:
+  storageClassName: "gp2"          # explicit — critical for this cluster
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 30Gi                # sufficient for 7-day retention at low volume
+
+# ── Elasticsearch configuration ───────────────────────────────────────────────
+esConfig:
+  elasticsearch.yml: |
+    # Single-node cluster — no replicas needed
+    cluster.name: "dsop-elk"
+    network.host: 0.0.0.0
+
+    # Disk watermarks for 30Gi PVC
+    cluster.routing.allocation.disk.watermark.low: "85%"
+    cluster.routing.allocation.disk.watermark.high: "90%"
+    cluster.routing.allocation.disk.watermark.flood_stage: "95%"
+
+    # Security — disable for demo simplicity
+    # PRODUCTION: enable xpack.security.enabled: true
+    xpack.security.enabled: false
+    xpack.security.transport.ssl.enabled: false
+    xpack.security.http.ssl.enabled: false
+
+# ── Init container: vm.max_map_count (required by Elasticsearch) ──────────────
+sysctlInitContainer:
+  enabled: true
+
+# ── Security context ──────────────────────────────────────────────────────────
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# ── Anti-affinity — prefer different nodes from Logstash + Kibana ────────────
+antiAffinity: "soft"
+antiAffinityTopologyKey: "kubernetes.io/hostname"
+
+# ── Health checks ─────────────────────────────────────────────────────────────
+readinessProbe:
+  failureThreshold: 3
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  successThreshold: 3
+  timeoutSeconds: 5
+
+# ── Service ───────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 9200
+  transportPort: 9300
+  labels:
+    project: dsop-project
+
+# ── Labels ────────────────────────────────────────────────────────────────────
+labels:
+  project: dsop-project
+  component: elasticsearch
+
+podLabels:
+  project: dsop-project
+  component: elasticsearch
+
+# ── Tolerations — none needed (no dedicated node for Udemy project) ───────────
+tolerations: []
+
+# ── Extra env vars ────────────────────────────────────────────────────────────
+# extraEnvs:
+#   - name: ELASTIC_PASSWORD
+#     value: "dsop-logging$#devops"     # change before demo
+#   - name: ELASTIC_USERNAME
+#     value: "elastic"
+
+# ── Lifecycle: set index template + ILM policy after startup ─────────────────
+# lifecycle:
+#   postStart:
+#     exec:
+#       command:
+#         - bash
+#         - -c
+#         - |
+#           # Wait for ES to be ready
+#           until curl -s http://localhost:9200/_cluster/health | grep -q '"status"'; do
+#             sleep 5
+#           done
+
+#           # ILM policy: 7-day hot, delete at 30 days
+#           curl -s -X PUT "http://localhost:9200/_ilm/policy/dsop-7d-policy" \
+#             -H "Content-Type: application/json" -d '{
+#               "policy": {
+#                 "phases": {
+#                   "hot": {
+#                     "min_age": "0ms",
+#                     "actions": {
+#                       "rollover": {
+#                         "max_age": "1d",
+#                         "max_primary_shard_size": "5gb"
+#                       }
+#                     }
+#                   },
+#                   "delete": {
+#                     "min_age": "30d",
+#                     "actions": { "delete": {} }
+#                   }
+#                 }
+#               }
+#             }'
+
+#           # Index template for logstash-* indices
+#           curl -s -X PUT "http://localhost:9200/_index_template/logstash-template" \
+#             -H "Content-Type: application/json" -d '{
+#               "index_patterns": ["logstash-*"],
+#               "template": {
+#                 "settings": {
+#                   "number_of_shards": 1,
+#                   "number_of_replicas": 0,
+#                   "index.lifecycle.name": "dsop-7d-policy"
+#                 },
+#                 "mappings": {
+#                   "properties": {
+#                     "@timestamp":     { "type": "date" },
+#                     "message":        { "type": "text" },
+#                     "namespace":      { "type": "keyword" },
+#                     "pod":            { "type": "keyword" },
+#                     "container":      { "type": "keyword" },
+#                     "node_name":      { "type": "keyword" },
+#                     "stream":         { "type": "keyword" },
+#                     "level":          { "type": "keyword" }
+#                   }
+#                 }
+#               }
+#             }'
+#           echo "ES bootstrap done."

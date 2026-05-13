@@ -1,0 +1,58 @@
+# ============================================
+# MAKELINE-SERVICE VAULT SETUP
+# ============================================
+
+export VAULT_ADDR=https://vault.devopsproduction.com
+
+
+# 1. Create combined secret (rabbitmq + mongodb credentials in one path)
+
+vault kv put secret/makeline-service \
+  rabbitmq_username="username" \
+  rabbitmq_password="password" \
+  mongodb_username="admin" \
+  mongodb_password="StrongPass123"
+
+# 2. Verify secret was created correctly
+
+
+vault kv get secret/makeline-service
+
+# 3. Create policy
+
+
+vault policy write makeline-service-policy - <<EOF
+path "secret/data/makeline-service" {
+capabilities = ["read"]
+} 
+EOF
+
+# 4. Create Kubernetes auth role
+
+vault write auth/kubernetes/role/makeline-service \
+  bound_service_account_names=makeline-service \
+  bound_service_account_namespaces=application \
+  policies=makeline-service-policy \
+  ttl=1h
+
+# 5. Verify role was created
+
+
+vault read auth/kubernetes/role/makeline-service
+
+====== Data ======
+Key                    Value
+---                    -----
+rabbitmq_username      username
+rabbitmq_password      password
+mongodb_username       admin
+mongodb_password       StrongPass123
+
+bound_service_account_names         [makeline-service]
+bound_service_account_namespaces    [application]
+policies                            [makeline-service-policy]
+ttl                                 1h
+
+
+kubectl apply -f deployment_automation_argocd/applications/makeline-service-app.yaml
+kubectl get pods -n application -w

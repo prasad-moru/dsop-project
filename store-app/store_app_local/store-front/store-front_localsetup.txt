@@ -1,0 +1,18 @@
+Node.js
+Vue CLI Service
+Docker
+
+
+nvm ls-remote
+
+nvm install v22.14.0
+
+nvm use v22.14.0
+
+export VITE_PRODUCT_SERVICE_URL=http://localhost:3002/
+
+export VITE_ORDER_SERVICE_URL=http://localhost:3000/
+
+npm install
+
+npm run dev

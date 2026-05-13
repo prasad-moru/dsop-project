@@ -1,0 +1,29 @@
+# Delete the wrong rolebinding
+kubectl delete rolebinding argo-rollouts-secret-reader -n application
+
+# Apply with correct namespace
+cat <<EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-rollouts-secret-reader
+  namespace: application
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-rollouts-secret-reader
+  namespace: application
+subjects:
+- kind: ServiceAccount
+  name: argo-rollouts
+  namespace: argocd          # ✅ Fixed — was argo-rollouts
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: argo-rollouts-secret-reader
+EOF

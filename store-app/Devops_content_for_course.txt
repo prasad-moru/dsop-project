@@ -1,0 +1,71 @@
+Devops 
+
+
+what?
+why?
+how?
+
+
+Problems
+
+tools 
+
+solution for the problem with tool. 
+
+
+Git/GitHub
+
+Build Tools 
+
+SAST : SonarQube
+
+Dependency Check Scanning :OWASP
+
+Container Image Scanning: Trivy 
+
+Packaging or deployment : Helm Charts
+
+GithubActions/ ArgoCD
+
+Containerization /Docker
+
+Container Orchestration Tools  Kubernetes
+
+Infrastructure Provisioning : Terraform.
+
+Monitoring Tools  : Grafana/Promethues
+
+Alerting & Notification Tools: Slack & Alertmager
+
+Services Mesh : Istio
+
+Secrets management : Hashi Corp Vault
+
+Cloud : AWS 
+
+Application Monitoring : DataDog
+
+Loggind System : EFK & ELK
+
+
+
+
+
+
+
+============================================
+
+mongo shell installation 
+
+ https://www.mongodb.com/docs/mongodb-shell/install/?operating-system=linux&linux-distribution=ubuntu&ubuntu-version=noble
+
+
+
+==================
+
+
+
+
+
+
+
