@@ -1,0 +1,355 @@
+# =============================================================================
+# Kube-Prometheus-Stack — Installation Guide
+# Project   : dsop-project
+# Chart     : dsop-project/monitoring-alerting/kube-prometheus-stack
+# Namespace : monitoring
+# Files     : storage_class.yaml | values-production.yaml
+# Integrations: HashiCorp Vault + Slack Alerting
+# =============================================================================
+
+
+# =============================================================================
+# STEP 1 — APPLY STORAGE CLASS
+# File: monitoring-alerting/storage_class.yaml
+# =============================================================================
+
+# Apply the gp3 StorageClass to the EKS cluster first.
+# This must be done BEFORE installing the Helm chart because
+# Prometheus and Alertmanager PVCs depend on it.
+
+kubectl apply -f monitoring-alerting/storage_class.yaml
+
+# Verify StorageClass is created
+kubectl get storageclass
+
+# You should see:
+# NAME            PROVISIONER       RECLAIMPOLICY   VOLUMEBINDINGMODE
+# gp3 (default)   ebs.csi.aws.com   Retain          WaitForFirstConsumer
+
+# -----------------------------------------------
+# WHAT THIS FILE DOES:
+# -----------------------------------------------
+# StorageClass Name  : gp3
+# Provisioner        : ebs.csi.aws.com (AWS EBS CSI Driver)
+# Default Class      : YES — storageclass.kubernetes.io/is-default-class: true
+# Volume Binding     : WaitForFirstConsumer
+#                      Binds PVC to the same AZ as the pod
+#                      Avoids cross-AZ volume attachment issues
+# Reclaim Policy     : Retain
+#                      Data is NOT deleted when PVC is deleted
+#                      Safer for production — no accidental data loss
+# Volume Expansion   : Enabled — resize PVC without deleting
+# Disk Type          : gp3 (faster and cheaper than gp2)
+# IOPS               : 3000
+# Throughput         : 125 MB/s
+# Encryption         : Enabled — all data encrypted at rest
+
+
+# =============================================================================
+# STEP 2 — CREATE MONITORING NAMESPACE
+# =============================================================================
+
+kubectl create namespace monitoring
+
+# Verify
+kubectl get namespace monitoring
+
+
+# =============================================================================
+# STEP 3 — VAULT + SLACK SETUP (Before Helm Install)
+# =============================================================================
+
+# ------------------------------------------------------------
+# HOW VAULT INTEGRATION WORKS IN THIS PROJECT
+# ------------------------------------------------------------
+#
+# Alertmanager needs the Slack Webhook URL to send alerts.
+# Instead of hardcoding it in values-production.yaml,
+# we store it in HashiCorp Vault and inject it at runtime.
+#
+# FLOW:
+#   1. Slack Webhook URL is stored in Vault at:
+#      secret/data/monitoring/alertmanager
+#
+#   2. Vault Agent Injector (sidecar) runs alongside Alertmanager pod
+#
+#   3. It reads from Vault and renders the URL into a file at:
+#      /vault/secrets/slack-webhook  (inside the pod)
+#
+#   4. Alertmanager reads the webhook URL from that file using:
+#      api_url_file: /vault/secrets/slack-webhook
+#
+#   5. The Slack URL NEVER touches Kubernetes etcd (no K8s Secret)
+#      This is the secure, production-grade approach.
+#
+# WHY THIS IS IMPORTANT:
+#   - No hardcoded secrets in values-production.yaml
+#   - No secrets stored in Git repository
+#   - No secrets stored in Kubernetes etcd
+#   - Vault controls who can access the Slack webhook URL
+#   - Secret rotated in Vault = auto-updated in pods
+
+
+# STEP 3A — Store Slack Webhook URL in Vault
+# ------------------------------------------------------------
+# Login to Vault
+vault login
+
+# Enable KV v2 secrets engine (if not already enabled)
+vault secrets enable -path=secret kv-v2
+
+# Store the Slack Webhook URL in Vault
+# Replace YOUR_SLACK_WEBHOOK_URL with your actual Slack webhook
+vault kv put secret/monitoring/alertmanager \
+  slack_webhook_url="https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK_URL"
+
+# Verify the secret is stored
+vault kv get secret/monitoring/alertmanager
+
+
+# STEP 3B — Create Vault Policy for Alertmanager
+# ------------------------------------------------------------
+# Create a Vault policy that allows alertmanager to read the secret
+cat <<EOF | vault policy write alertmanager -
+path "secret/data/monitoring/alertmanager" {
+  capabilities = ["read"]
+}
+EOF
+
+# Verify policy is created
+vault policy read alertmanager
+
+
+# STEP 3C — Enable Kubernetes Auth in Vault
+# ------------------------------------------------------------
+# This allows pods in Kubernetes to authenticate with Vault
+# using their Service Account tokens
+
+vault auth enable kubernetes
+
+# Configure Vault Kubernetes auth with EKS cluster details
+vault write auth/kubernetes/config \
+  kubernetes_host="https://$(kubectl get endpoints kubernetes \
+  -o jsonpath='{.subsets[0].addresses[0].ip}'):443"
+
+# Create Vault role for Alertmanager pod
+# Links: Vault policy + K8s ServiceAccount + Namespace
+vault write auth/kubernetes/role/alertmanager \
+  bound_service_account_names=kube-prometheus-stack-alertmanager \
+  bound_service_account_namespaces=monitoring \
+  policies=alertmanager \
+  ttl=24h
+
+# Verify role is created
+vault read auth/kubernetes/role/alertmanager
+
+
+# STEP 3D — Store Grafana Admin Credentials in Vault & K8s Secret
+# ------------------------------------------------------------
+# Grafana admin credentials are stored as a Kubernetes Secret
+# named 'grafana-admin-credentials' in monitoring namespace.
+# This is referenced in values-production.yaml as:
+#   admin:
+#     existingSecret: "grafana-admin-credentials"
+
+kubectl create secret generic grafana-admin-credentials \
+  --namespace monitoring \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password=YOUR_SECURE_PASSWORD
+
+# Verify secret is created
+kubectl get secret grafana-admin-credentials -n monitoring
+
+
+# =============================================================================
+# HOW SLACK INTEGRATION WORKS IN THIS PROJECT
+# =============================================================================
+#
+# Slack receives alerts from Alertmanager through webhooks.
+# Two Slack channels are configured in values-production.yaml:
+#
+#   #alert-manager-testing  (for CRITICAL alerts)
+#   #alert-manager-testing  (for WARNING alerts)
+#
+# TODO: Create these channels in your Slack workspace:
+#   #dsop-alerts-critical   (for critical production alerts)
+#   #dsop-alerts-warning    (for warning level alerts)
+# Then update channel names in values-production.yaml
+#
+# ALERT ROUTING LOGIC (from values-production.yaml):
+# -----------------------------------------------
+# ALL alerts → slack-warning (default receiver)
+#
+# IF severity = critical:
+#   → slack-critical channel
+#   → group_wait: 10s (fires faster)
+#   → repeat_interval: 1h (reminds every hour)
+#   → icon: :fire:
+#
+# IF severity = warning:
+#   → slack-warning channel
+#   → repeat_interval: 4h
+#   → icon: :warning:
+#
+# IF alertname = Watchdog:
+#   → null (silenced — Watchdog is just a heartbeat alert)
+#
+# INHIBIT RULES (suppress lower severity if higher fires):
+#   critical fires → suppresses warning + info for same namespace
+#   warning fires  → suppresses info for same namespace
+#
+# ALERT MESSAGE FORMAT (Critical):
+#   Title   : [FIRING:1] AlertName - Namespace
+#   Severity: critical
+#   Cluster : dsop-project-dev
+#   Namespace: monitoring
+#   Summary : (from alert annotation)
+#   Description: (from alert annotation)
+#   Runbook : https://runbooks.prometheus-operator.dev/runbooks
+#   Started : (time since alert started)
+
+
+# =============================================================================
+# STEP 4 — INSTALL HELM CHART
+# File: monitoring-alerting/kube-prometheus-stack/values-production.yaml
+# =============================================================================
+
+helm install prometheus-stack \
+  monitoring-alerting/kube-prometheus-stack \
+  --namespace monitoring \
+  --values monitoring-alerting/kube-prometheus-stack/values-production.yaml
+
+# -----------------------------------------------
+# COMMAND BREAKDOWN:
+# -----------------------------------------------
+# helm install            → Install a new Helm release
+# prometheus-stack        → Release name
+# monitoring-alerting/    → Local chart path in your project
+#   kube-prometheus-stack   (no remote repo needed)
+# --namespace monitoring  → Deploy into monitoring namespace
+# --values                → Use your production values file
+#   monitoring-alerting/kube-prometheus-stack/values-production.yaml
+
+
+# DRY RUN FIRST (always test before applying)
+helm install prometheus-stack \
+  monitoring-alerting/kube-prometheus-stack \
+  --namespace monitoring \
+  --values monitoring-alerting/kube-prometheus-stack/values-production.yaml \
+  --dry-run
+
+
+# =============================================================================
+# STEP 5 — VERIFY INSTALLATION
+# =============================================================================
+
+# Check all pods are running in monitoring namespace
+kubectl get pods -n monitoring
+
+# You should see pods for:
+#   prometheus-stack-grafana
+#   prometheus-stack-kube-prometheus-alertmanager
+#   prometheus-stack-kube-prometheus-prometheus
+#   prometheus-stack-kube-state-metrics
+#   prometheus-stack-prometheus-node-exporter (one per node)
+#   prometheus-stack-operator
+
+# Check all services
+kubectl get svc -n monitoring
+
+# Check PVCs are bound (uses gp3 StorageClass)
+kubectl get pvc -n monitoring
+
+# Check Helm release status
+helm status prometheus-stack -n monitoring
+
+# Check Vault Agent sidecar injection in Alertmanager pod
+kubectl describe pod -l app.kubernetes.io/name=alertmanager -n monitoring
+
+# Verify Vault secrets are injected (inside Alertmanager pod)
+kubectl exec -it \
+  $(kubectl get pod -l app.kubernetes.io/name=alertmanager \
+  -n monitoring -o jsonpath='{.items[0].metadata.name}') \
+  -n monitoring -c alertmanager -- \
+  cat /vault/secrets/slack-webhook
+
+
+# =============================================================================
+# STEP 6 — UPGRADE (When values-production.yaml is updated)
+# =============================================================================
+
+helm upgrade prometheus-stack \
+  monitoring-alerting/kube-prometheus-stack \
+  --namespace monitoring \
+  --values monitoring-alerting/kube-prometheus-stack/values-production.yaml
+
+# -----------------------------------------------
+# COMMAND BREAKDOWN:
+# -----------------------------------------------
+# helm upgrade            → Upgrade existing Helm release
+# prometheus-stack        → Same release name used during install
+# monitoring-alerting/    → Same local chart path
+#   kube-prometheus-stack
+# --namespace monitoring  → Same namespace
+# --values                → Updated values-production.yaml
+
+
+# =============================================================================
+# STEP 7 — USEFUL HELM COMMANDS
+# =============================================================================
+
+# List Helm releases in monitoring namespace
+helm list -n monitoring
+
+# Check release history (revisions)
+helm history prometheus-stack -n monitoring
+
+# Check values used in current release
+helm get values prometheus-stack -n monitoring
+
+# Rollback to previous version if something breaks
+helm rollback prometheus-stack -n monitoring
+
+# Rollback to a specific revision
+helm rollback prometheus-stack 1 -n monitoring
+
+# Uninstall release
+helm uninstall prometheus-stack -n monitoring
+
+
+# =============================================================================
+# WHAT IS DEPLOYED — COMPONENTS SUMMARY
+# =============================================================================
+#
+# PROMETHEUS
+#   Scrape Interval   : 30s
+#   Retention         : 30 days
+#   Storage           : 50Gi gp3 PVC
+#   Resources         : 300m CPU / 1Gi RAM (requests)
+#   Monitors          : ALL namespaces (serviceMonitorSelector: {})
+#   External Labels   : cluster=dsop-project-dev, env=dev, region=us-east-1
+#
+# ALERTMANAGER
+#   Storage           : 5Gi gp3 PVC
+#   Retention         : 120h
+#   Slack Integration : Via Vault-injected webhook (no hardcoded secrets)
+#   Channels          : #dsop-alerts-critical | #dsop-alerts-warning
+#
+# GRAFANA
+#   Storage           : 10Gi gp3 PVC
+#   Admin Credentials : From K8s Secret 'grafana-admin-credentials'
+#   Ingress           : AWS ALB — grafana.devopsproduction.com
+#   Timezone          : Asia/Kolkata (IST)
+#   Dashboards        : Auto-loaded from all namespaces
+#
+# NODE EXPORTER      : DaemonSet — runs on every EKS node
+# KUBE STATE METRICS : Tracks Pods, Deployments, HPAs, PVCs state
+# PROMETHEUS OPERATOR: Manages Prometheus & Alertmanager lifecycle
+#
+# NAMESPACES MONITORED:
+#   application | platform | monitoring | kube-system
+#   istio-system | argocd | vault
+#
+# =============================================================================
+# END OF GUIDE
+# =============================================================================

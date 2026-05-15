@@ -1,3 +1,12 @@
+
+
+
+
+
+
+
+
+
 alertmanager:
   configAnnotations:
     vault.security.banzaicloud.io/vault-addr: "https://vault.vault.svc.cluster.local:8200"
