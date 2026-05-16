@@ -6,6 +6,17 @@ A production-grade DevSecOps implementation that deploys a cloud-native e-commer
 
 ---
 
+## 🎓 Udemy Course
+
+<a href="https://www.udemy.com/share/10etiV3@uOO43TjDfO8Y3_QRPKIKH7qVhk8spE11yA7ijSvVxDQavjkFnOQKW5_OziKrGd3p/" target="_blank">
+  <img src="https://img.shields.io/badge/Enroll%20on-Udemy-EC5252?style=for-the-badge&logo=udemy&logoColor=white" alt="Udemy Course" />
+</a>
+
+> 🚀 **[Click here to enroll in the Full DevSecOps Course on Udemy](https://www.udemy.com/share/10etiV3@uOO43TjDfO8Y3_QRPKIKH7qVhk8spE11yA7ijSvVxDQavjkFnOQKW5_OziKrGd3p/)**  
+> Learn how to build and secure a production-grade cloud-native platform on AWS EKS from scratch.
+
+---
+
 ## Table of Contents
 
 - [Application Architecture](#1-application-architecture)
@@ -150,3 +161,11 @@ All service-to-service communication is managed by **Istio**, with **Envoy** sid
 | APM & RUM | DataDog APM, DataDog RUM |
 | Service Mesh | Istio, Envoy, Kiali, Jaeger |
 | AI | OpenAI, Azure OpenAI DALL-E |
+
+---
+
+<p align="center">
+  <a href="https://www.udemy.com/share/10etiV3@uOO43TjDfO8Y3_QRPKIKH7qVhk8spE11yA7ijSvVxDQavjkFnOQKW5_OziKrGd3p/">
+    <img src="https://img.shields.io/badge/⭐%20Enroll%20Now%20on%20Udemy-DevSecOps%20Course-EC5252?style=for-the-badge&logo=udemy&logoColor=white" alt="Enroll on Udemy" />
+  </a>
+</p>
